@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#080C12" rx="96"/>
+  <!-- Safe zone para iconos maskable: contenido dentro del 80% central -->
+  <path d="M 112 384 L 200 320 L 272 348 L 348 232 L 408 152"
+        stroke="#FBBF24" stroke-width="34" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="408" cy="152" r="26" fill="#FBBF24"/>
+  <circle cx="112" cy="384" r="10" fill="#FBBF24" opacity="0.55"/>
+  <circle cx="200" cy="320" r="10" fill="#FBBF24" opacity="0.55"/>
+  <circle cx="272" cy="348" r="10" fill="#FBBF24" opacity="0.55"/>
+  <circle cx="348" cy="232" r="10" fill="#FBBF24" opacity="0.55"/>
+</svg>

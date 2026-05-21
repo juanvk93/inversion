@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#080C12">
+<meta name="description" content="Seguimiento personal de cartera de inversiones">
+<!-- PWA / iOS Safari -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mi Cartera">
+<meta name="application-name" content="Mi Cartera">
+<title>Mi Cartera</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div class="bg-glow" id="bgGlow"></div>
+
+<div class="wrap">
+  <header>
+    <button class="btn-hamburger" id="btnDrawer" title="Menú (M)" aria-label="Abrir menú">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="brand"><h1>MI CARTERA</h1></div>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="actions">
+      <span class="saved" id="saved" style="display:none">✓ guardado</span>
+      <span class="save-error" id="saveError" style="display:none" title="">⚠ error al guardar</span>
+      <button class="btn-theme" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema">☀</button>
+      <button class="btn-primary" id="btnAddEntry" style="display:none">+ ENTRADA</button>
+    </div>
+  </header>
+
+  <main id="main"></main>
+</div>
+
+<!-- Drawer lateral -->
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <h3>OPCIONES</h3>
+    <button class="modal-close" id="btnDrawerClose">✕</button>
+  </div>
+
+  <div class="drawer-section">
+    <div class="drawer-section-title">PRODUCTOS</div>
+    <button class="drawer-item" id="btnNewProdDrawer">
+      <span class="di-icon">+</span>
+      <div class="di-body">
+        <div class="di-title">NUEVO PRODUCTO</div>
+        <div class="di-sub">Añadir a la cartera</div>
+      </div>
+    </button>
+  </div>
+
+  <div class="drawer-section">
+    <div class="drawer-section-title">VISTAS</div>
+    <button class="drawer-item" id="btnProyeccion">
+      <span class="di-icon">↗</span>
+      <div class="di-body">
+        <div class="di-title">PROYECCIÓN</div>
+        <div class="di-sub">Simulación de evolución futura</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnObjetivos">
+      <span class="di-icon">◎</span>
+      <div class="di-body">
+        <div class="di-title">OBJETIVOS</div>
+        <div class="di-sub">Gestionar metas de inversión</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnFire">
+      <span class="di-icon">△</span>
+      <div class="di-body">
+        <div class="di-title">PLAN FIRE</div>
+        <div class="di-sub">Independencia financiera</div>
+      </div>
+    </button>
+  </div>
+
+  <div class="drawer-section">
+    <div class="drawer-section-title">DATOS</div>
+    <button class="drawer-item" id="btnExport">
+      <span class="di-icon">↑</span>
+      <div class="di-body">
+        <div class="di-title">EXPORTAR CSV</div>
+        <div class="di-sub">Descargar todos los datos</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnImport">
+      <span class="di-icon">↓</span>
+      <div class="di-body">
+        <div class="di-title">IMPORTAR CSV</div>
+        <div class="di-sub">Reemplazar o fusionar datos</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnExportJSON">
+      <span class="di-icon">↑</span>
+      <div class="di-body">
+        <div class="di-title">EXPORTAR JSON</div>
+        <div class="di-sub">Backup completo (productos, entradas, objetivos)</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnImportJSON">
+      <span class="di-icon">↓</span>
+      <div class="di-body">
+        <div class="di-title">IMPORTAR JSON</div>
+        <div class="di-sub">Restaurar backup completo</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnPDF">
+      <span class="di-icon">⎙</span>
+      <div class="di-body">
+        <div class="di-title">EXPORTAR PDF</div>
+        <div class="di-sub">Informe completo de la vista actual</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnSeguridad">
+      <span class="di-icon">⚿</span>
+      <div class="di-body">
+        <div class="di-title">SEGURIDAD</div>
+        <div class="di-sub">Cifrar datos con passphrase</div>
+      </div>
+    </button>
+    <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none">
+    <input type="file" id="fileImportJSON" accept=".json,application/json" style="display:none">
+  </div>
+
+  <div class="drawer-section">
+    <div class="drawer-section-title">PUNTOS DE RESTAURACIÓN</div>
+    <button class="drawer-item" id="btnSnapshot">
+      <span class="di-icon">⦿</span>
+      <div class="di-body">
+        <div class="di-title">CREAR PUNTO</div>
+        <div class="di-sub" id="snapSub">Sin guardado reciente</div>
+      </div>
+    </button>
+    <div class="snap-list" id="snapList"></div>
+  </div>
+
+  <div class="drawer-section">
+    <div class="drawer-section-title">ATAJOS DE TECLADO</div>
+    <div class="kbd-list">
+      <div><kbd>N</kbd><span>Nueva entrada</span></div>
+      <div><kbd>E</kbd><span>Exportar CSV</span></div>
+      <div><kbd>I</kbd><span>Importar CSV</span></div>
+      <div><kbd>S</kbd><span>Snapshot</span></div>
+      <div><kbd>M</kbd><span>Menú lateral</span></div>
+      <div><kbd>P</kbd><span>Proyección</span></div>
+      <div><kbd>F</kbd><span>Plan FIRE</span></div>
+      <div><kbd>V</kbd><span>Cambiar mes / año</span></div>
+      <div><kbd>1</kbd>–<kbd>9</kbd><span>Cambiar pestaña</span></div>
+      <div><kbd>Esc</kbd><span>Cerrar diálogos</span></div>
+    </div>
+  </div>
+
+  <div class="drawer-section">
+    <div class="drawer-section-title">INFO</div>
+    <button class="drawer-item" id="btnChangelog">
+      <span class="di-icon">≡</span>
+      <div class="di-body">
+        <div class="di-title">CHANGELOG</div>
+        <div class="di-sub">Historial de versiones y almacenamiento</div>
+      </div>
+    </button>
+  </div>
+</aside>
+
+<!-- Modal entrada -->
+<div class="modal-bg" id="modalEntrada">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h2 id="meTitle">NUEVA ENTRADA</h2>
+        <div class="modal-sub" id="meSub"></div>
+      </div>
+      <button class="modal-close" data-close="modalEntrada">✕</button>
+    </div>
+    <div class="field">
+      <label>MES</label>
+      <input type="month" id="meFecha">
+    </div>
+    <div class="field">
+      <label style="margin-bottom:8px">APORTACIÓN DESGLOSADA (€)</label>
+      <div class="triple">
+        <div>
+          <input type="number" step="0.01" placeholder="Manual"   id="meManual">
+          <div class="sublabel">MANUAL</div>
+        </div>
+        <div>
+          <input type="number" step="0.01" placeholder="Saveback" id="meSaveback">
+          <div class="sublabel">SAVEBACK</div>
+        </div>
+        <div>
+          <input type="number" step="0.01" placeholder="Round-up" id="meRoundup">
+          <div class="sublabel">ROUND-UP</div>
+        </div>
+      </div>
+      <div class="total-line" id="meTotal">Total: €0,00</div>
+    </div>
+    <div class="field">
+      <label>VALOR REAL ACTUAL (€)</label>
+      <input type="number" step="0.01" placeholder="4450" id="meValor">
+    </div>
+    <div class="field" style="margin-bottom:24px">
+      <label>NOTA DEL MES (opcional)</label>
+      <textarea rows="2" id="meNota" placeholder="Ej: corrección de mercado, aporte extra por bonus..."></textarea>
+    </div>
+    <button class="save-btn" id="meSave">GUARDAR</button>
+  </div>
+</div>
+
+<!-- Modal seguridad -->
+<div class="modal-bg" id="modalSeguridad">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>SEGURIDAD</h2>
+      <button class="modal-close" data-close="modalSeguridad">✕</button>
+    </div>
+    <div id="seg-body"></div>
+  </div>
+</div>
+
+<!-- Modal changelog -->
+<div class="modal-bg" id="modalChangelog">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h2>CHANGELOG</h2>
+      <button class="modal-close" data-close="modalChangelog">✕</button>
+    </div>
+
+    <!-- Barra de almacenamiento -->
+    <div class="storage-section" id="storageInfo">
+      <div class="storage-loading">Calculando almacenamiento…</div>
+    </div>
+
+    <!-- Entradas del changelog -->
+    <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.5</span>
+          <span class="cl-ver-date">Mayo 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li>Sistema de objetivos con metas por producto o cartera total y barra de progreso</li>
+          <li>KPIs: Volatilidad anualizada (×√12) y Ratio de Sharpe con tooltips explicativos</li>
+          <li>Histograma de distribución de rentabilidades mensuales (8 tramos, verde/rojo)</li>
+          <li>Changelog con barra de uso de IndexedDB</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.4</span>
+          <span class="cl-ver-date">Mayo 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li>Drag & drop para reordenar pestañas de productos, con persistencia en IndexedDB</li>
+          <li>Desglose de aportaciones en KPI VALOR ACTUAL (Manual / Saveback / Round-up)</li>
+          <li>Proyección movida al menú lateral — atajo <kbd>P</kbd></li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.3</span>
+          <span class="cl-ver-date">Mayo 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li>Migración de localStorage a IndexedDB — sin límite de ~5 MB</li>
+          <li>PWA instalable: service worker con caché offline y manifest</li>
+          <li>Snapshots in-app: hasta 20 puntos de restauración con gestión visual</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.2</span>
+          <span class="cl-ver-date">Abril 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li>KPI Drawdown máximo con tooltip explicativo</li>
+          <li>Resumen fiscal anual agrupado por año</li>
+          <li>Gráfico donut de distribución de cartera (vista Total)</li>
+          <li>Tooltips en KPIs de TIR Anualizada y Drawdown Máx</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.1</span>
+          <span class="cl-ver-date">2025</span>
+        </div>
+        <ul class="cl-items">
+          <li>XIRR (Newton-Raphson) para TIR anualizada</li>
+          <li>Heatmap de rentabilidad mensual por año</li>
+          <li>Tres tipos de aportación: Manual, Saveback y Round-up</li>
+          <li>Modified Dietz para cálculo de rentabilidad mensual</li>
+          <li>Comparativa de TIR por producto (vista Total)</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.0</span>
+          <span class="cl-ver-date">2024</span>
+        </div>
+        <ul class="cl-items">
+          <li>Seguimiento de múltiples productos de inversión</li>
+          <li>Entradas mensuales con valor real, aportación y notas</li>
+          <li>Exportación e importación CSV</li>
+          <li>Gráficos: valor vs aportado y rentabilidad acumulada</li>
+          <li>Atajos de teclado globales</li>
+          <li>Puntos de restauración (snapshots)</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal objetivos -->
+<div class="modal-bg" id="modalObjetivos">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>OBJETIVOS</h2>
+      <button class="modal-close" data-close="modalObjetivos">✕</button>
+    </div>
+    <div id="objList" class="obj-list"></div>
+    <div class="obj-separator"></div>
+    <div class="field">
+      <label>NOMBRE DEL OBJETIVO *</label>
+      <input type="text" id="objNombre" placeholder="Ej: Fondo de emergencia, Jubilación...">
+    </div>
+    <div class="field">
+      <label>META (€) *</label>
+      <input type="number" step="100" min="1" id="objMeta" placeholder="50000">
+    </div>
+    <div class="field" style="margin-bottom:24px">
+      <label>PRODUCTO</label>
+      <select id="objProducto"></select>
+    </div>
+    <button class="save-btn" id="objSave" disabled>AÑADIR OBJETIVO</button>
+  </div>
+</div>
+
+<!-- Modal producto -->
+<div class="modal-bg" id="modalProd">
+  <div class="modal small">
+    <div class="modal-head">
+      <h2 id="mpTitle">NUEVO PRODUCTO</h2>
+      <button class="modal-close" data-close="modalProd">✕</button>
+    </div>
+    <div class="field">
+      <label>NOMBRE *</label>
+      <input type="text" id="mpNombre" placeholder="Ej: Emergentes, S&P 500, Oro...">
+    </div>
+    <div class="field">
+      <label>REFERENCIA</label>
+      <input type="text" id="mpRef" placeholder="ISIN, ticker, plataforma, broker...">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>TIPOLOGÍA</label>
+        <input type="text" id="mpTipologia" list="mpTipologiaList" placeholder="ETF, Criptomoneda...">
+        <datalist id="mpTipologiaList"></datalist>
+      </div>
+      <div class="field">
+        <label>DIVISA</label>
+        <input type="text" id="mpDivisa" list="mpDivisaList" placeholder="EUR" maxlength="6">
+        <datalist id="mpDivisaList"></datalist>
+      </div>
+    </div>
+    <div class="field">
+      <label>COMENTARIOS</label>
+      <textarea id="mpComentarios" rows="3" placeholder="Estrategia, riesgo, notas personales..."></textarea>
+    </div>
+    <div class="field" style="margin-bottom:26px">
+      <label>COLOR</label>
+      <div class="colors" id="mpColors"></div>
+    </div>
+    <button class="save-btn" id="mpSave" disabled>CREAR PRODUCTO</button>
+  </div>
+</div>
+
+<!-- Toast snapshot recordatorio -->
+<div class="toast" id="snapToast" style="display:none">
+  <div class="toast-icon">⚠</div>
+  <div class="toast-body">
+    <div class="toast-title">HACE TIEMPO QUE NO GUARDAS BACKUP</div>
+    <div class="toast-sub">Pulsa <kbd>S</kbd> o abre el menú para crear un punto de restauración</div>
+  </div>
+  <button class="toast-close" id="snapToastClose">✕</button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

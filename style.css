@@ -1101,3 +1101,490 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 :root.light .save-error { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.25); }
 :root.light .saved { color: var(--green); }
 :root.light .heat-cell { color: rgba(0,0,0,0.6) !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRECIOS · CoinGecko · Calculadora · Badge en cabecera
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.field-row-2 { grid-template-columns: 1fr 1fr !important; }
+.lbl-hint { color: var(--darkest); font-size: 9px; font-weight: 400; letter-spacing: 1px; }
+.field-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--dimmer);
+  letter-spacing: 0.5px;
+  min-height: 14px;
+}
+.field-hint.ok  { color: var(--green); }
+.field-hint.err { color: var(--red); }
+
+.prod-tag-price {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.20);
+  color: var(--green);
+  font-family: monospace;
+  letter-spacing: 0.5px;
+}
+
+/* Calculadora en modal entrada */
+.calc-helper {
+  background: var(--panel);
+  border: 1px solid var(--panel-b);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+.calc-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px;
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 1px;
+}
+.calc-title { color: var(--mute); }
+.calc-source {
+  color: var(--dimmer); font-size: 9px;
+  background: rgba(255,255,255,0.03);
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--panel-b);
+}
+.calc-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.calc-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.calc-cell input {
+  width: 100%; box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--panel-b); border: 1px solid var(--panel-b);
+  border-radius: 8px; color: var(--text);
+  font-family: monospace; font-size: 13px;
+}
+.calc-cell input:focus { outline: none; border-color: var(--accent); }
+.calc-cell .sublabel {
+  font-size: 8px; font-family: monospace;
+  letter-spacing: 1px; color: var(--darkest);
+  text-align: center;
+}
+.calc-op {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px; color: var(--dimmer);
+  align-self: center; padding-top: 4px;
+}
+.calc-result {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 16px;
+  color: var(--dimmer);
+  text-align: center;
+  padding: 8px 6px;
+  background: var(--panel-b);
+  border: 1px dashed var(--panel-b);
+  border-radius: 8px;
+}
+.calc-result.ready { color: var(--accent); border-style: solid; border-color: var(--accent-line); }
+.calc-apply {
+  margin-top: 10px; width: 100%;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 8px;
+  padding: 9px;
+  font-family: monospace; font-size: 10px; letter-spacing: 2px;
+  cursor: pointer; transition: all .15s;
+}
+.calc-apply:hover { background: var(--accent-line); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VISTA · ASIGNACIÓN
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.asig-table { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.asig-row {
+  display: grid;
+  grid-template-columns: 1.8fr 1fr 1fr 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--panel-b);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 12px; font-family: monospace;
+  position: relative;
+}
+.asig-row.asig-head {
+  background: transparent;
+  border: none;
+  padding: 6px 14px 2px;
+  color: var(--darkest);
+  font-size: 9px; letter-spacing: 1.5px;
+}
+.asig-row.asig-total {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  font-weight: 600;
+}
+.asig-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.asig-drift-ok    { color: var(--green); }
+.asig-drift-mid   { color: var(--yellow); }
+.asig-drift-high  { color: var(--red); }
+.asig-aporte      { font-weight: 600; }
+.asig-bar {
+  grid-column: 1 / -1;
+  position: relative;
+  height: 4px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 2px;
+  margin-top: 6px;
+}
+.asig-bar-actual {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 2px;
+  opacity: 0.55;
+}
+.asig-bar-target {
+  position: absolute; top: -2px; bottom: -2px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.asig-sim-input {
+  display: flex; gap: 12px; align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0 14px;
+}
+.asig-sim-input label {
+  font-family: monospace; font-size: 10px;
+  color: var(--mute); letter-spacing: 1px;
+}
+.asig-sim-input input {
+  padding: 9px 12px;
+  background: var(--panel-b);
+  border: 1px solid var(--panel-b);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: monospace; font-size: 14px;
+  width: 140px;
+}
+.asig-sim-input input:focus { outline: none; border-color: var(--accent); }
+.asig-sim-presets { display: flex; gap: 4px; }
+.asig-sim-presets button {
+  background: transparent;
+  border: 1px solid var(--panel-b);
+  color: var(--dimmer);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer; transition: all .15s;
+}
+.asig-sim-presets button:hover {
+  border-color: var(--accent); color: var(--accent);
+}
+.asig-empty {
+  text-align: center; padding: 24px 0;
+  color: var(--dimmest); font-family: monospace; font-size: 11px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VISTA · DIFF SNAPSHOTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.diff-loading {
+  text-align: center; padding: 60px 0;
+  color: var(--dimmer); font-family: monospace; font-size: 12px;
+}
+.diff-selectors {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+.diff-sel { display: flex; flex-direction: column; gap: 6px; }
+.diff-sel label {
+  font-family: monospace; font-size: 9px;
+  letter-spacing: 1.5px; color: var(--darkest);
+}
+.diff-sel select {
+  padding: 9px 12px;
+  background: var(--panel-b);
+  border: 1px solid var(--panel-b);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: monospace; font-size: 12px;
+  cursor: pointer;
+}
+.diff-sel select:focus { outline: none; border-color: var(--accent); }
+.diff-vs {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  color: var(--dimmer);
+  padding: 0 4px;
+  align-self: center;
+}
+.diff-lapso {
+  font-family: monospace; font-size: 10px;
+  color: var(--dimmer);
+  text-align: right;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 6px;
+  align-self: center;
+}
+
+.diff-table { display: flex; flex-direction: column; gap: 4px; }
+.diff-row {
+  display: grid;
+  grid-template-columns: 1.8fr 1fr 1fr 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 11px 14px;
+  background: var(--panel-b);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 12px; font-family: monospace;
+}
+.diff-row.diff-head {
+  background: transparent; padding: 6px 14px 2px;
+  color: var(--darkest);
+  font-size: 9px; letter-spacing: 1.5px;
+}
+.diff-row.diff-new     { border-color: rgba(52, 211, 153, 0.25); }
+.diff-row.diff-removed { opacity: 0.6; border-color: rgba(248, 113, 113, 0.20); }
+.diff-row em { font-style: normal; color: var(--darkest); font-size: 9px; letter-spacing: 1px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VISTA · FISCAL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.fiscal-tramos {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.fiscal-tramo {
+  background: var(--panel-b);
+  border: 1px solid var(--panel-b);
+  border-radius: 10px;
+  padding: 14px 12px;
+  text-align: center;
+}
+.fiscal-tramo .ft-range {
+  font-family: monospace; font-size: 10px;
+  color: var(--dimmer); letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.fiscal-tramo .ft-tipo {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 26px;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.fiscal-sim-toolbar {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.fiscal-preset {
+  background: transparent;
+  border: 1px solid var(--panel-b);
+  color: var(--dimmer);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-family: monospace; font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer; transition: all .15s;
+}
+.fiscal-preset:hover { border-color: var(--accent); color: var(--accent); }
+
+.fiscal-table { display: flex; flex-direction: column; gap: 4px; }
+.fiscal-row {
+  display: grid;
+  grid-template-columns: 1.8fr 1fr 1.2fr 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 11px 14px;
+  background: var(--panel-b);
+  border-radius: 10px;
+  font-size: 12px; font-family: monospace;
+}
+.fiscal-row.fiscal-head {
+  background: transparent; padding: 6px 14px 2px;
+  color: var(--darkest);
+  font-size: 9px; letter-spacing: 1.5px;
+}
+.fiscal-row input {
+  width: 100%; box-sizing: border-box;
+  padding: 6px 10px;
+  background: var(--bg); border: 1px solid var(--panel-b);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: monospace; font-size: 12px;
+}
+.fiscal-row input:focus { outline: none; border-color: var(--accent); }
+
+.fiscal-result {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 4px 0;
+}
+.fr-row {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: monospace; font-size: 13px;
+  color: var(--mute);
+  padding: 6px 0;
+}
+.fr-row.fr-sep {
+  border-top: 1px solid var(--panel-b);
+  padding-top: 14px; margin-top: 6px;
+}
+.fr-row.fr-final {
+  border-top: 1px solid var(--panel-b);
+  padding-top: 16px; margin-top: 6px;
+  font-size: 15px; color: var(--text);
+}
+.fr-marg {
+  text-align: right;
+  font-family: monospace; font-size: 10px;
+  color: var(--dimmest);
+  margin-top: 8px;
+}
+
+.fiscal-tlh p {
+  font-family: 'Lato', sans-serif; font-size: 13px;
+  color: var(--mute); line-height: 1.5;
+  margin: 8px 0;
+}
+.fiscal-tlh ul {
+  margin: 8px 0 12px 18px;
+  font-family: monospace; font-size: 12px;
+  color: var(--text);
+}
+.fiscal-tlh li { margin: 4px 0; }
+.fiscal-tlh-info {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11px !important;
+  color: var(--mute) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE MÓVIL · vistas nuevas + calculadora
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+  /* Calculadora: 1 columna en móvil */
+  .calc-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .calc-op { display: none; }
+  .calc-cell.calc-op { display: none; }
+
+  /* Asignación */
+  .asig-row, .asig-row.asig-total {
+    grid-template-columns: 1fr 1fr;
+    padding: 12px 14px;
+    gap: 4px 12px;
+  }
+  .asig-row.asig-head { display: none; }
+  .asig-row > span {
+    display: flex; justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .asig-row > span::before {
+    content: attr(data-l);
+    font-size: 8px; font-family: monospace; color: var(--darkest);
+    letter-spacing: 1.5px;
+  }
+  .asig-row > span:last-child { border-bottom: none; }
+  .asig-row > span:first-child {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--panel-b);
+    margin-bottom: 4px; padding-bottom: 8px;
+    font-size: 13px;
+  }
+  .asig-row > span:first-child::before { display: none; }
+  .asig-bar { grid-column: 1 / -1; }
+
+  .asig-sim-input { flex-direction: column; align-items: stretch; }
+  .asig-sim-input input { width: 100%; }
+  .asig-sim-presets { justify-content: space-between; }
+  .asig-sim-presets button { flex: 1; }
+
+  /* Diff */
+  .diff-selectors {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .diff-vs { text-align: center; }
+  .diff-lapso { text-align: center; }
+
+  .diff-row, .diff-row.diff-head {
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+  }
+  .diff-row.diff-head { display: none; }
+  .diff-row > span {
+    display: flex; justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .diff-row > span:last-child { border-bottom: none; }
+  .diff-row > span::before {
+    content: attr(data-l);
+    font-size: 8px; font-family: monospace; color: var(--darkest);
+    letter-spacing: 1.5px;
+  }
+  .diff-row > span:first-child {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--panel-b);
+    margin-bottom: 4px; padding-bottom: 8px;
+    font-size: 13px;
+  }
+  .diff-row > span:first-child::before { display: none; }
+
+  /* Fiscal */
+  .fiscal-tramos { grid-template-columns: 1fr 1fr; }
+  .fiscal-tramo .ft-tipo { font-size: 20px; }
+
+  .fiscal-row, .fiscal-row.fiscal-head {
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+  }
+  .fiscal-row.fiscal-head { display: none; }
+  .fiscal-row > span {
+    display: flex; justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .fiscal-row > span:last-child { border-bottom: none; }
+  .fiscal-row > span::before {
+    content: attr(data-l);
+    font-size: 8px; font-family: monospace; color: var(--darkest);
+    letter-spacing: 1.5px;
+  }
+  .fiscal-row > span:first-child {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--panel-b);
+    margin-bottom: 4px; padding-bottom: 8px;
+    font-size: 13px;
+  }
+  .fiscal-row > span:first-child::before { display: none; }
+
+  .fiscal-sim-toolbar { gap: 4px; }
+  .fiscal-preset { flex: 1; padding: 8px 6px; }
+}

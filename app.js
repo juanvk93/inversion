@@ -44,6 +44,19 @@ const DB_SNAP = "snapshots";   // snapshots por timestamp
 const SNAP_REMINDER_DAYS = 7;
 const SNAP_MAX           = 20;   // máximo de snapshots in-app (los más antiguos se descartan)
 
+// CoinGecko
+const COINGECKO_BASE = "https://api.coingecko.com/api/v3/simple/price";
+const COINGECKO_TTL  = 5 * 60 * 1000;   // 5 minutos de caché
+
+// Tramos IRPF 2026 (renta del ahorro, modelo D-100)
+const FISCAL_TRAMOS_2026 = [
+  { hasta:    6000, tipo: 0.19 },
+  { hasta:   50000, tipo: 0.21 },
+  { hasta:  200000, tipo: 0.23 },
+  { hasta:  300000, tipo: 0.27 },
+  { hasta: Infinity, tipo: 0.28 },
+];
+
 const PRODUCTOS_INIT = [
   { id: "etf", nombre: "MSCI World", referencia: "IE00B4L5Y983 · Acc · EUR", color: "#60A5FA" },
   { id: "btc", nombre: "Bitcoin",    referencia: "BTC · Kraken · EUR",        color: "#F97316" },
@@ -232,7 +245,16 @@ const state = {
   editProdId:     null,
   productoColor:  COLORES[0],
   lastSnapshot:   null,
+  // Vistas avanzadas
+  asignacionAporte: 0,           // simulador de aportación en Asignación
+  diffSnapA:       null,         // id del snapshot A
+  diffSnapB:       "current",    // id del snapshot B o "current"
+  fiscalSim:       {},           // { [productoId]: { venderEur: number } }
 };
+
+// Caché de precios (no persiste — solo en memoria)
+const priceCache = {};          // { coingeckoId: { eur, ts } }
+const priceFetching = {};       // { coingeckoId: Promise } — evita duplicados
 
 const charts = {};
 
@@ -842,13 +864,17 @@ function generarJSON() {
     version:    JSON_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     productos:  state.productos.map(p => ({
-      id:          p.id,
-      nombre:      p.nombre || "",
-      referencia:  p.referencia  || "",
-      tipologia:   p.tipologia   || "",
-      divisa:      p.divisa      || "",
-      comentarios: p.comentarios || "",
-      color:       p.color       || COLORES[0],
+      id:                 p.id,
+      nombre:             p.nombre || "",
+      referencia:         p.referencia  || "",
+      tipologia:          p.tipologia   || "",
+      divisa:             p.divisa      || "",
+      comentarios:        p.comentarios || "",
+      color:              p.color       || COLORES[0],
+      unidades:           Number.isFinite(+p.unidades) ? +p.unidades : 0,
+      precioManual:       Number.isFinite(+p.precioManual) ? +p.precioManual : 0,
+      coingeckoId:        p.coingeckoId || "",
+      asignacionObjetivo: Number.isFinite(+p.asignacionObjetivo) ? +p.asignacionObjetivo : 0,
     })),
     entradas: Object.fromEntries(
       Object.entries(state.entradas).map(([pid, list]) => [
@@ -910,16 +936,21 @@ function importarJSON(texto) {
     let id = sanitizeId(p.id || p.nombre || `prod_${i}`);
     while (usadosId.has(id)) id = `${id}_${i}`;
     usadosId.add(id);
+    const num = (v) => (Number.isFinite(+v) && +v >= 0) ? +v : 0;
     return {
       id,
-      nombre:      String(p.nombre || id),
-      referencia:  String(p.referencia  || ""),
-      tipologia:   String(p.tipologia   || ""),
-      divisa:      String(p.divisa      || "").toUpperCase(),
-      comentarios: String(p.comentarios || ""),
-      color:       /^#[0-9a-fA-F]{6}$/.test(p.color || "")
+      nombre:             String(p.nombre || id),
+      referencia:         String(p.referencia  || ""),
+      tipologia:          String(p.tipologia   || ""),
+      divisa:             String(p.divisa      || "").toUpperCase(),
+      comentarios:        String(p.comentarios || ""),
+      color:              /^#[0-9a-fA-F]{6}$/.test(p.color || "")
         ? p.color
         : COLORES[i % COLORES.length],
+      unidades:           num(p.unidades),
+      precioManual:       num(p.precioManual),
+      coingeckoId:        String(p.coingeckoId || "").toLowerCase().replace(/[^a-z0-9-]/g, ""),
+      asignacionObjetivo: Math.max(0, Math.min(100, num(p.asignacionObjetivo))),
     };
   });
   const idsValidos = new Set(productos.map(p => p.id));
@@ -1148,6 +1179,83 @@ async function renderSnapshots() {
 function showSnapToast() { $("#snapToast").style.display = "flex"; }
 function hideSnapToast() { $("#snapToast").style.display = "none"; }
 function checkSnapReminder() { if (diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast(); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5c. PRECIOS · CoinGecko + precio manual
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Devuelve precio en EUR para un producto. Si tiene coingeckoId usa la caché
+// (con fetch en background si está caducada). Si no, usa precioManual.
+function getProductPriceSync(prod) {
+  if (!prod) return null;
+  if (prod.coingeckoId) {
+    const c = priceCache[prod.coingeckoId];
+    if (c && Number.isFinite(c.eur)) {
+      return { eur: c.eur, ts: c.ts, source: "coingecko", id: prod.coingeckoId };
+    }
+  }
+  if (Number.isFinite(+prod.precioManual) && +prod.precioManual > 0) {
+    return { eur: +prod.precioManual, ts: null, source: "manual" };
+  }
+  return null;
+}
+
+// Fetch (deduplicado) — devuelve Promise con el precio actualizado.
+async function fetchCoinGeckoPrice(id) {
+  if (!id) return null;
+  const cached = priceCache[id];
+  if (cached && Date.now() - cached.ts < COINGECKO_TTL) return cached;
+  if (priceFetching[id]) return priceFetching[id];
+  priceFetching[id] = (async () => {
+    try {
+      const url = `${COINGECKO_BASE}?ids=${encodeURIComponent(id)}&vs_currencies=eur`;
+      const r = await fetch(url, { headers: { accept: "application/json" } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const eur = data?.[id]?.eur;
+      if (!Number.isFinite(eur)) throw new Error("Sin precio en respuesta");
+      priceCache[id] = { eur, ts: Date.now() };
+      return priceCache[id];
+    } catch (err) {
+      console.warn("[Cartera] CoinGecko falló para", id, err);
+      return null;
+    } finally {
+      delete priceFetching[id];
+    }
+  })();
+  return priceFetching[id];
+}
+
+// Refresca en background los precios de todos los productos con coingeckoId
+// y vuelve a renderizar si llega algo nuevo. Llamado tras cada render.
+async function refreshAllPricesAsync() {
+  const ids = state.productos
+    .map(p => p.coingeckoId)
+    .filter(id => id && (!priceCache[id] || Date.now() - priceCache[id].ts >= COINGECKO_TTL));
+  if (!ids.length) return;
+  const before = ids.map(id => priceCache[id]?.eur);
+  await Promise.all(ids.map(fetchCoinGeckoPrice));
+  const changed = ids.some((id, i) => priceCache[id]?.eur !== before[i]);
+  // Solo re-renderizar si hay cambios y seguimos en la misma tab interesada
+  if (changed && needsPriceRender()) render();
+}
+
+function needsPriceRender() {
+  return state.tab === "asignacion" ||
+         state.tab === "fiscal" ||
+         (state.tab !== "total" && state.tab !== "proyeccion" &&
+          state.tab !== "fire" && state.tab !== "diff");
+}
+
+function priceAgeLabel(ts) {
+  if (!ts) return "manual";
+  const min = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (min === 0) return "ahora";
+  if (min === 1) return "hace 1 min";
+  if (min < 60)  return `hace ${min} min`;
+  const h = Math.round(min / 60);
+  return `hace ${h} h`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 6. CHARTS
@@ -1458,6 +1566,9 @@ function drawChartPeso(data) {
 function getAccentColor() {
   if (state.tab === "proyeccion") return "#A78BFA";
   if (state.tab === "fire")       return "#34D399";
+  if (state.tab === "asignacion") return "#22D3EE";
+  if (state.tab === "diff")       return "#FB923C";
+  if (state.tab === "fiscal")     return "#F87171";
   if (state.tab === "total")      return "#FBBF24";
   return state.productos.find(p => p.id === state.tab)?.color || "#FBBF24";
 }
@@ -1601,14 +1712,22 @@ function render() {
   renderTabs();
 
   const btnAdd = $("#btnAddEntry");
-  const esProd = state.tab !== "total" && state.tab !== "proyeccion" && state.tab !== "fire";
+  const reservados = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal"]);
+  const esProd = !reservados.has(state.tab);
   btnAdd.style.display    = esProd ? "inline-block" : "none";
   btnAdd.style.background = accent;
   btnAdd.onclick          = () => openEntryModal();
 
-  if (state.tab === "proyeccion") return renderProyeccion();
-  if (state.tab === "fire")       return renderFIRE();
-  return renderTabActual();
+  let result;
+  if      (state.tab === "proyeccion") result = renderProyeccion();
+  else if (state.tab === "fire")       result = renderFIRE();
+  else if (state.tab === "asignacion") result = renderAsignacion();
+  else if (state.tab === "diff")       result = renderDiff();
+  else if (state.tab === "fiscal")     result = renderFiscal();
+  else                                  result = renderTabActual();
+  // Fetch async de precios CoinGecko + re-render si llega algo
+  refreshAllPricesAsync();
+  return result;
 }
 
 function renderTabActual() {
@@ -1644,6 +1763,15 @@ function renderTabActual() {
     const tags = [];
     if (prod.tipologia) tags.push(`<span class="prod-tag">${esc(prod.tipologia)}</span>`);
     if (prod.divisa)    tags.push(`<span class="prod-tag">${esc(prod.divisa)}</span>`);
+    // Badge de precio actual y unidades, si están disponibles
+    const price = getProductPriceSync(prod);
+    if (price) {
+      const fuente = price.source === "coingecko" ? `CG · ${priceAgeLabel(price.ts)}` : "manual";
+      tags.push(`<span class="prod-tag prod-tag-price" title="Precio unitario actual">${fmtE(price.eur)}/u · ${fuente}</span>`);
+    }
+    if (Number.isFinite(+prod.unidades) && +prod.unidades > 0) {
+      tags.push(`<span class="prod-tag">${(+prod.unidades).toLocaleString("es-ES", { maximumFractionDigits: 8 })} u</span>`);
+    }
     const refTxt = prod.referencia ? `<span class="prod-ref">${esc(prod.referencia)}</span>` : "";
     subHTML = [tags.join(""), refTxt].filter(Boolean).join(" ");
   }
@@ -2516,6 +2644,607 @@ function renderFIRE() {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 7b. VISTA · ASIGNACIÓN OBJETIVO + DRIFT
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Calcula sugerencia de aportación que minimiza drift. Solo aporta, nunca vende.
+// Si la suma de gaps positivos cabe en el aporte, llena cada gap. Si no,
+// distribuye proporcionalmente al gap restante.
+function sugerirAportacion(productos, aporte) {
+  if (aporte <= 0) return productos.map(p => ({ ...p, aportar: 0 }));
+  const valorTotalActual = productos.reduce((s, p) => s + p.valorActual, 0);
+  const totalNuevo       = valorTotalActual + aporte;
+  // Gap por producto contra el target del NUEVO total
+  const conGap = productos.map(p => {
+    const targetValor = totalNuevo * (p.pctObjetivo / 100);
+    const gap         = Math.max(0, targetValor - p.valorActual);
+    return { ...p, targetValor, gap };
+  });
+  const sumGaps = conGap.reduce((s, p) => s + p.gap, 0);
+  if (sumGaps === 0) {
+    // Sin gaps: reparto proporcional al objetivo
+    return conGap.map(p => ({ ...p, aportar: aporte * (p.pctObjetivo / 100) }));
+  }
+  if (sumGaps <= aporte) {
+    // Llena cada gap y el sobrante se distribuye según objetivo entre todos
+    const sobra = aporte - sumGaps;
+    const sumObj = conGap.reduce((s, p) => s + p.pctObjetivo, 0) || 1;
+    return conGap.map(p => ({
+      ...p,
+      aportar: p.gap + sobra * (p.pctObjetivo / sumObj),
+    }));
+  }
+  // Aporte insuficiente: distribuye proporcionalmente al gap
+  return conGap.map(p => ({
+    ...p,
+    aportar: aporte * (p.gap / sumGaps),
+  }));
+}
+
+function renderAsignacion() {
+  const accent = "#22D3EE";
+
+  // Recolectar productos con valor actual (último valor) y % objetivo
+  const items = state.productos.map(p => {
+    const ents = (state.entradas[p.id] || []);
+    const valorActual = ents.length ? ents.at(-1).valor : 0;
+    return {
+      id:           p.id,
+      nombre:       p.nombre,
+      color:        p.color,
+      pctObjetivo:  Number.isFinite(+p.asignacionObjetivo) ? +p.asignacionObjetivo : 0,
+      valorActual,
+    };
+  });
+  const totalActual = items.reduce((s, p) => s + p.valorActual, 0);
+  const sumObjetivo = items.reduce((s, p) => s + p.pctObjetivo, 0);
+  const conPct = items.map(p => ({
+    ...p,
+    pctActual: totalActual > 0 ? (p.valorActual / totalActual) * 100 : 0,
+  }));
+  // Drift por producto = pctActual - pctObjetivo
+  const driftMax = conPct.reduce((m, p) => Math.max(m, Math.abs(p.pctActual - p.pctObjetivo)), 0);
+
+  const aporte = Number.isFinite(+state.asignacionAporte) ? +state.asignacionAporte : 0;
+  const sugerencias = sugerirAportacion(conPct, aporte);
+
+  const headerKpis = `
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">VALOR ACTUAL</div>
+        <div class="kpi-value" style="color:${accent}">${fmtE(totalActual)}</div>
+        <div class="kpi-sub">${items.length} producto(s)</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">SUMA % OBJETIVO</div>
+        <div class="kpi-value" style="color:${Math.abs(sumObjetivo - 100) < 0.5 ? 'var(--green)' : 'var(--yellow)'}">${fmt(sumObjetivo)}%</div>
+        <div class="kpi-sub">${Math.abs(sumObjetivo - 100) < 0.5 ? '✓ Suma 100%' : 'Ajusta hasta llegar a 100%'}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">DRIFT MÁX</div>
+        <div class="kpi-value" style="color:${driftMax > 5 ? 'var(--red)' : driftMax > 2 ? 'var(--yellow)' : 'var(--green)'}">${fmt(driftMax)}%</div>
+        <div class="kpi-sub">Mayor desviación absoluta</div>
+      </div>
+    </div>`;
+
+  const sinObjetivos = sumObjetivo === 0;
+
+  let tablaActualHTML;
+  if (sinObjetivos) {
+    tablaActualHTML = `<div class="panel"><div class="empty" style="padding:36px 0">
+      <div class="empty-title">SIN ASIGNACIÓN CONFIGURADA</div>
+      <div class="empty-sub">Edita cada producto y define un "% OBJETIVO EN CARTERA"</div>
+    </div></div>`;
+  } else {
+    tablaActualHTML = `
+      <div class="panel">
+        <div class="panel-title">DRIFT ACTUAL VS OBJETIVO</div>
+        <div class="asig-table">
+          <div class="asig-row asig-head">
+            <span>PRODUCTO</span><span>VALOR</span><span>ACTUAL %</span><span>OBJETIVO %</span><span>DRIFT</span>
+          </div>
+          ${conPct.map(p => {
+            const drift = p.pctActual - p.pctObjetivo;
+            const driftCls = Math.abs(drift) > 5 ? "asig-drift-high" : Math.abs(drift) > 2 ? "asig-drift-mid" : "asig-drift-ok";
+            return `
+              <div class="asig-row">
+                <span data-l="PRODUCTO"><span class="asig-dot" style="background:${p.color}"></span>${esc(p.nombre)}</span>
+                <span data-l="VALOR">${fmtE(p.valorActual)}</span>
+                <span data-l="ACTUAL">${fmt(p.pctActual)}%</span>
+                <span data-l="OBJETIVO">${fmt(p.pctObjetivo)}%</span>
+                <span data-l="DRIFT" class="${driftCls}">${drift>=0?"+":""}${fmt(drift)}%</span>
+                <div class="asig-bar">
+                  <div class="asig-bar-actual" style="width:${Math.min(p.pctActual, 100)}%;background:${p.color}"></div>
+                  <div class="asig-bar-target" style="left:${Math.min(p.pctObjetivo, 100)}%"></div>
+                </div>
+              </div>`;
+          }).join("")}
+        </div>
+      </div>`;
+  }
+
+  // Simulador de aportación
+  const sumSug = sugerencias.reduce((s, p) => s + p.aportar, 0);
+  const simuladorHTML = sinObjetivos ? "" : `
+    <div class="panel">
+      <div class="panel-title">SIMULADOR · ¿CUÁNTO APORTAR Y A DÓNDE?</div>
+      <div class="asig-sim-input">
+        <label>Voy a aportar (€)</label>
+        <input type="number" min="0" step="50" id="asigAporte" value="${aporte || ''}" placeholder="500">
+        <div class="asig-sim-presets">
+          <button data-aporte="100">100</button>
+          <button data-aporte="250">250</button>
+          <button data-aporte="500">500</button>
+          <button data-aporte="1000">1000</button>
+        </div>
+      </div>
+      ${aporte > 0 ? `
+      <div class="asig-table">
+        <div class="asig-row asig-head">
+          <span>PRODUCTO</span><span>APORTAR</span><span>% NUEVO</span><span>DRIFT NUEVO</span>
+        </div>
+        ${sugerencias.map(p => {
+          const valorNuevo = p.valorActual + p.aportar;
+          const totalNuevo = totalActual + aporte;
+          const pctNuevo   = totalNuevo > 0 ? (valorNuevo / totalNuevo) * 100 : 0;
+          const driftNuevo = pctNuevo - p.pctObjetivo;
+          const driftCls = Math.abs(driftNuevo) > 5 ? "asig-drift-high" : Math.abs(driftNuevo) > 2 ? "asig-drift-mid" : "asig-drift-ok";
+          return `
+            <div class="asig-row">
+              <span data-l="PRODUCTO"><span class="asig-dot" style="background:${p.color}"></span>${esc(p.nombre)}</span>
+              <span data-l="APORTAR" class="asig-aporte" style="color:${accent}">${fmtE(p.aportar)}</span>
+              <span data-l="% NUEVO">${fmt(pctNuevo)}%</span>
+              <span data-l="DRIFT NUEVO" class="${driftCls}">${driftNuevo>=0?"+":""}${fmt(driftNuevo)}%</span>
+            </div>`;
+        }).join("")}
+        <div class="asig-row asig-total">
+          <span data-l="TOTAL">TOTAL</span>
+          <span data-l="APORTAR" style="color:${accent}">${fmtE(sumSug)}</span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>` : `<div class="asig-empty">Introduce una cantidad para ver la distribución sugerida</div>`}
+    </div>`;
+
+  const html = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">ASIGNACIÓN DE CARTERA</h2>
+        <div class="subtitle">Drift y sugerencia de aportación que minimiza la desviación</div>
+      </div>
+    </div>
+    ${headerKpis}
+    ${tablaActualHTML}
+    ${simuladorHTML}
+  `;
+  $("#main").innerHTML = html;
+
+  // Bindings
+  if ($("#asigAporte")) {
+    $("#asigAporte").oninput = debounce((e) => {
+      state.asignacionAporte = parseFloat(e.target.value) || 0;
+      renderAsignacion();
+    }, 200);
+  }
+  $$('[data-aporte]').forEach(b => b.onclick = () => {
+    state.asignacionAporte = +b.dataset.aporte;
+    renderAsignacion();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7c. VISTA · DIFF ENTRE SNAPSHOTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function snapshotEstadoActual() {
+  return {
+    id:       "current",
+    fecha:    new Date().toISOString(),
+    productos: state.productos,
+    entradas:  state.entradas,
+  };
+}
+
+function resumenSnapshot(snap) {
+  // Suma de valor actual + aportado por producto. Devuelve { porProd: [...], totalValor, totalAportado }
+  const porProd = (snap.productos || []).map(p => {
+    const ents = (snap.entradas?.[p.id] || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const valorActual  = ents.length ? ents.at(-1).valor : 0;
+    const aportado     = ents.reduce((s, e) => s + (e.manual || 0) + (e.saveback || 0) + (e.roundup || 0), 0);
+    return {
+      id: p.id, nombre: p.nombre, color: p.color,
+      valorActual, aportado,
+      ganancia: valorActual - aportado,
+      nEntradas: ents.length,
+    };
+  });
+  return {
+    porProd,
+    totalValor:    porProd.reduce((s, p) => s + p.valorActual, 0),
+    totalAportado: porProd.reduce((s, p) => s + p.aportado, 0),
+  };
+}
+
+function renderDiff() {
+  const accent = "#FB923C";
+  $("#main").innerHTML = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">COMPARAR SNAPSHOTS</h2>
+        <div class="subtitle">Evolución entre dos puntos guardados</div>
+      </div>
+    </div>
+    <div class="panel"><div class="diff-loading">Cargando snapshots…</div></div>
+  `;
+  listarSnapshots().then(snaps => renderDiffSync(snaps));
+}
+
+function renderDiffSync(snaps) {
+  const accent = "#FB923C";
+  const opciones = [
+    { id: "current", label: "Estado actual" },
+    ...snaps.map(s => ({ id: String(s.id), label: formatSnapDate(s.fecha) })),
+  ];
+
+  if (snaps.length === 0) {
+    $("#main").innerHTML = `
+      <div class="title-row">
+        <div>
+          <h2 style="color:${accent}">COMPARAR SNAPSHOTS</h2>
+          <div class="subtitle">Evolución entre dos puntos guardados</div>
+        </div>
+      </div>
+      <div class="panel"><div class="empty" style="padding:60px 0">
+        <div class="empty-title">SIN SNAPSHOTS GUARDADOS</div>
+        <div class="empty-sub">Crea al menos uno desde el menú lateral · <kbd>S</kbd></div>
+      </div></div>
+    `;
+    return;
+  }
+
+  // Defaults si no hay selección o IDs huérfanos
+  const validIds = new Set(opciones.map(o => o.id));
+  if (!state.diffSnapA || !validIds.has(String(state.diffSnapA))) {
+    state.diffSnapA = String(snaps[snaps.length - 1].id);   // el más antiguo
+  }
+  if (!state.diffSnapB || !validIds.has(String(state.diffSnapB))) {
+    state.diffSnapB = "current";
+  }
+
+  const snapById = (id) => id === "current"
+    ? snapshotEstadoActual()
+    : snaps.find(s => String(s.id) === String(id));
+  const snapA = snapById(state.diffSnapA);
+  const snapB = snapById(state.diffSnapB);
+
+  const resA = resumenSnapshot(snapA);
+  const resB = resumenSnapshot(snapB);
+
+  // Unión de productos (puede haber ID que solo está en uno)
+  const ids = new Set([...resA.porProd.map(p => p.id), ...resB.porProd.map(p => p.id)]);
+  const filas = [...ids].map(id => {
+    const a = resA.porProd.find(p => p.id === id);
+    const b = resB.porProd.find(p => p.id === id);
+    const ref = b || a;
+    return {
+      id,
+      nombre: ref.nombre,
+      color:  ref.color,
+      valorA:    a?.valorActual || 0,
+      valorB:    b?.valorActual || 0,
+      aportadoA: a?.aportado    || 0,
+      aportadoB: b?.aportado    || 0,
+      gananciaA: a?.ganancia    || 0,
+      gananciaB: b?.ganancia    || 0,
+      soloEnA:   !!a && !b,
+      soloEnB:   !a && !!b,
+    };
+  });
+
+  const dValor   = resB.totalValor    - resA.totalValor;
+  const dAport   = resB.totalAportado - resA.totalAportado;
+  const gananciaA = resA.totalValor - resA.totalAportado;
+  const gananciaB = resB.totalValor - resB.totalAportado;
+  const dGanancia = gananciaB - gananciaA;
+  const colorD = (v) => v >= 0 ? "var(--green)" : "var(--red)";
+  const signo  = (v) => v >= 0 ? "+" : "";
+
+  // Tiempo transcurrido
+  const tA = new Date(snapA.fecha).getTime();
+  const tB = new Date(snapB.fecha).getTime();
+  const dias = Math.abs((tB - tA) / 86400000);
+  let lapso;
+  if (dias < 1) lapso = "Menos de 1 día";
+  else if (dias < 60) lapso = `${Math.round(dias)} días`;
+  else if (dias < 730) lapso = `${(dias/30).toFixed(1)} meses`;
+  else lapso = `${(dias/365).toFixed(1)} años`;
+
+  const selectorHTML = `
+    <div class="panel">
+      <div class="diff-selectors">
+        <div class="diff-sel">
+          <label>SNAPSHOT A</label>
+          <select id="diffA">
+            ${opciones.map(o => `<option value="${esc(o.id)}" ${String(o.id)===String(state.diffSnapA)?"selected":""}>${esc(o.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="diff-vs">vs</div>
+        <div class="diff-sel">
+          <label>SNAPSHOT B</label>
+          <select id="diffB">
+            ${opciones.map(o => `<option value="${esc(o.id)}" ${String(o.id)===String(state.diffSnapB)?"selected":""}>${esc(o.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="diff-lapso">${lapso}</div>
+      </div>
+    </div>`;
+
+  const kpisHTML = `
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">VALOR</div>
+        <div class="kpi-value">${fmtE(resA.totalValor)} → ${fmtE(resB.totalValor)}</div>
+        <div class="kpi-sub" style="color:${colorD(dValor)}">${signo(dValor)}${fmtE(dValor)} · ${signo(dValor)}${fmt(resA.totalValor > 0 ? (dValor/resA.totalValor)*100 : 0)}%</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">APORTADO</div>
+        <div class="kpi-value">${fmtE(resA.totalAportado)} → ${fmtE(resB.totalAportado)}</div>
+        <div class="kpi-sub" style="color:${colorD(dAport)}">${signo(dAport)}${fmtE(dAport)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">GANANCIA</div>
+        <div class="kpi-value" style="color:${colorD(gananciaB)}">${fmtE(gananciaA)} → ${fmtE(gananciaB)}</div>
+        <div class="kpi-sub" style="color:${colorD(dGanancia)}">${signo(dGanancia)}${fmtE(dGanancia)}</div>
+      </div>
+    </div>`;
+
+  const tablaHTML = `
+    <div class="panel">
+      <div class="panel-title">DETALLE POR PRODUCTO</div>
+      <div class="diff-table">
+        <div class="diff-row diff-head">
+          <span>PRODUCTO</span><span>VALOR A</span><span>VALOR B</span><span>Δ VALOR</span><span>Δ GANANCIA</span>
+        </div>
+        ${filas.map(f => {
+          const d = f.valorB - f.valorA;
+          const dG = f.gananciaB - f.gananciaA;
+          const cls = f.soloEnA ? "diff-removed" : f.soloEnB ? "diff-new" : "";
+          return `
+            <div class="diff-row ${cls}">
+              <span data-l="PRODUCTO"><span class="asig-dot" style="background:${f.color}"></span>${esc(f.nombre)}${f.soloEnA?' <em>(eliminado)</em>':f.soloEnB?' <em>(nuevo)</em>':''}</span>
+              <span data-l="VALOR A">${fmtE(f.valorA)}</span>
+              <span data-l="VALOR B">${fmtE(f.valorB)}</span>
+              <span data-l="Δ VALOR" style="color:${colorD(d)}">${signo(d)}${fmtE(d)}</span>
+              <span data-l="Δ GANANCIA" style="color:${colorD(dG)}">${signo(dG)}${fmtE(dG)}</span>
+            </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+
+  $("#main").innerHTML = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">COMPARAR SNAPSHOTS</h2>
+        <div class="subtitle">${formatSnapDate(snapA.fecha)} → ${formatSnapDate(snapB.fecha)}</div>
+      </div>
+    </div>
+    ${selectorHTML}
+    ${kpisHTML}
+    ${tablaHTML}
+  `;
+
+  $("#diffA").onchange = (e) => { state.diffSnapA = e.target.value; renderDiff(); };
+  $("#diffB").onchange = (e) => { state.diffSnapB = e.target.value; renderDiff(); };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7d. VISTA · FISCALIDAD (simulador D-100, plusvalías 2026)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Aplica los tramos progresivos del ahorro a una base positiva.
+function calcImpuestoTramos(baseEur) {
+  if (!Number.isFinite(baseEur) || baseEur <= 0) return 0;
+  let restante = baseEur;
+  let total = 0, prev = 0;
+  for (const t of FISCAL_TRAMOS_2026) {
+    if (restante <= 0) break;
+    const ancho = Math.min(restante, t.hasta - prev);
+    total += ancho * t.tipo;
+    restante -= ancho;
+    prev = t.hasta;
+    if (!Number.isFinite(t.hasta)) break;
+  }
+  return total;
+}
+
+// Calcula tipo marginal de un importe en los tramos.
+function tipoMarginal(baseEur) {
+  if (!Number.isFinite(baseEur) || baseEur <= 0) return 0;
+  let prev = 0;
+  for (const t of FISCAL_TRAMOS_2026) {
+    if (baseEur <= t.hasta) return t.tipo;
+    prev = t.hasta;
+  }
+  return FISCAL_TRAMOS_2026.at(-1).tipo;
+}
+
+function renderFiscal() {
+  const accent = "#F87171";
+
+  // Por producto: aportado acumulado = coste base, valor actual = valor final
+  const filas = state.productos.map(p => {
+    const ents = (state.entradas[p.id] || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const valorActual = ents.length ? ents.at(-1).valor : 0;
+    const aportado    = ents.reduce((s, e) => s + (e.manual || 0) + (e.saveback || 0) + (e.roundup || 0), 0);
+    const ganancia    = valorActual - aportado;
+    return {
+      id: p.id, nombre: p.nombre, color: p.color,
+      valorActual, aportado, ganancia,
+      pctGanancia: aportado > 0 ? (ganancia / aportado) * 100 : 0,
+    };
+  });
+
+  // Estado del simulador: cuánto vende de cada producto
+  if (!state.fiscalSim || typeof state.fiscalSim !== "object") state.fiscalSim = {};
+  filas.forEach(f => {
+    if (!Number.isFinite(state.fiscalSim[f.id])) state.fiscalSim[f.id] = 0;
+    // si vende más del valor actual, recortar
+    if (state.fiscalSim[f.id] > f.valorActual) state.fiscalSim[f.id] = f.valorActual;
+  });
+
+  // Plusvalía hipotética por producto (proporcional al valor vendido)
+  const conPlus = filas.map(f => {
+    const vender = state.fiscalSim[f.id] || 0;
+    const plusvalia = f.valorActual > 0 ? vender * (f.ganancia / f.valorActual) : 0;
+    return { ...f, vender, plusvalia };
+  });
+
+  // Ventas totales
+  const totalVender    = conPlus.reduce((s, f) => s + f.vender, 0);
+  const ganadores      = conPlus.filter(f => f.plusvalia > 0);
+  const perdedores     = conPlus.filter(f => f.plusvalia < 0);
+  const sumGanancias   = ganadores.reduce((s, f) => s + f.plusvalia, 0);
+  const sumPerdidas    = Math.abs(perdedores.reduce((s, f) => s + f.plusvalia, 0));
+  // Compensación con tope LIRPF: pérdidas pueden compensar 100% de la base del ahorro
+  // (a partir de 2023 el tope inter-grupos es 25%, pero dentro del propio grupo es libre).
+  const baseImponible  = Math.max(0, sumGanancias - sumPerdidas);
+  const ahorroFiscal   = sumGanancias > 0 ? (calcImpuestoTramos(sumGanancias) - calcImpuestoTramos(baseImponible)) : 0;
+  const impuesto       = calcImpuestoTramos(baseImponible);
+  const tasaMarginal   = tipoMarginal(baseImponible);
+
+  // ─── Resumen "si vendieras TODO hoy" ───
+  const totVal     = filas.reduce((s, f) => s + f.valorActual, 0);
+  const totApor    = filas.reduce((s, f) => s + f.aportado, 0);
+  const totGanan   = totVal - totApor;
+  const totBaseImp = Math.max(0, totGanan);
+  const totImp     = calcImpuestoTramos(totBaseImp);
+
+  const colorG = (v) => v > 0 ? "var(--green)" : v < 0 ? "var(--red)" : "var(--mute)";
+
+  const tramosHTML = `
+    <div class="panel">
+      <div class="panel-title">TRAMOS RENTA DEL AHORRO · 2026</div>
+      <div class="fiscal-tramos">
+        ${FISCAL_TRAMOS_2026.map((t, i) => {
+          const prev = i === 0 ? 0 : FISCAL_TRAMOS_2026[i-1].hasta;
+          const desde = i === 0 ? "0€" : fmtE(prev);
+          const hasta = Number.isFinite(t.hasta) ? `${fmtE(t.hasta)}` : "∞";
+          return `<div class="fiscal-tramo">
+            <div class="ft-range">${desde} – ${hasta}</div>
+            <div class="ft-tipo">${(t.tipo*100).toFixed(0)}%</div>
+          </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+
+  const kpisHTML = `
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">VALOR ACTUAL</div>
+        <div class="kpi-value" style="color:${accent}">${fmtE(totVal)}</div>
+        <div class="kpi-sub">Aportado: ${fmtE(totApor)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">PLUSVALÍA LATENTE</div>
+        <div class="kpi-value" style="color:${colorG(totGanan)}">${totGanan>=0?"+":""}${fmtE(totGanan)}</div>
+        <div class="kpi-sub">No tributa hasta venta</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">SI VENDIERAS TODO HOY</div>
+        <div class="kpi-value" style="color:var(--red)">-${fmtE(totImp)}</div>
+        <div class="kpi-sub">Impuesto · base ${fmtE(totBaseImp)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">NETO TRAS IMPUESTOS</div>
+        <div class="kpi-value" style="color:var(--green)">${fmtE(totVal - totImp)}</div>
+        <div class="kpi-sub">Si vendieras todo</div>
+      </div>
+    </div>`;
+
+  // Simulador interactivo
+  const simHTML = `
+    <div class="panel">
+      <div class="panel-title">SIMULADOR · ¿CUÁNTO PAGARÍA SI VENDIERA?</div>
+      <div class="fiscal-sim-toolbar">
+        <button class="fiscal-preset" data-pct="0">RESET</button>
+        <button class="fiscal-preset" data-pct="25">25% de cada</button>
+        <button class="fiscal-preset" data-pct="50">50% de cada</button>
+        <button class="fiscal-preset" data-pct="100">100% de cada</button>
+      </div>
+      <div class="fiscal-table">
+        <div class="fiscal-row fiscal-head">
+          <span>PRODUCTO</span><span>VALOR</span><span>VENDER €</span><span>PLUSVALÍA</span>
+        </div>
+        ${conPlus.map(f => `
+          <div class="fiscal-row">
+            <span data-l="PRODUCTO"><span class="asig-dot" style="background:${f.color}"></span>${esc(f.nombre)}</span>
+            <span data-l="VALOR">${fmtE(f.valorActual)}</span>
+            <span data-l="VENDER €">
+              <input type="number" min="0" max="${f.valorActual}" step="50" data-fiscal-vender="${esc(f.id)}" value="${f.vender || ""}" placeholder="0">
+            </span>
+            <span data-l="PLUSVALÍA" style="color:${colorG(f.plusvalia)}">${f.plusvalia>=0?"+":""}${fmtE(f.plusvalia)}</span>
+          </div>`).join("")}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">RESULTADO FISCAL DE LA SIMULACIÓN</div>
+      <div class="fiscal-result">
+        <div class="fr-row"><span>Ventas totales</span><strong>${fmtE(totalVender)}</strong></div>
+        <div class="fr-row"><span>Ganancias brutas</span><strong style="color:var(--green)">+${fmtE(sumGanancias)}</strong></div>
+        <div class="fr-row"><span>Pérdidas (compensan)</span><strong style="color:var(--red)">-${fmtE(sumPerdidas)}</strong></div>
+        <div class="fr-row fr-sep"><span>Base imponible</span><strong>${fmtE(baseImponible)}</strong></div>
+        <div class="fr-row"><span>Cuota a pagar</span><strong style="color:var(--red)">-${fmtE(impuesto)}</strong></div>
+        ${ahorroFiscal > 0 ? `<div class="fr-row"><span>Ahorro por compensación</span><strong style="color:var(--green)">+${fmtE(ahorroFiscal)}</strong></div>` : ""}
+        <div class="fr-row fr-final"><span>Líquido tras impuestos</span><strong style="color:${accent}">${fmtE(totalVender - impuesto)}</strong></div>
+        <div class="fr-marg">Tipo marginal aplicado: ${(tasaMarginal*100).toFixed(0)}%</div>
+      </div>
+    </div>
+  `;
+
+  // Tax-loss harvesting
+  const tlhHTML = (perdedores.length && ganadores.length && totalVender === 0) ? `
+    <div class="panel">
+      <div class="panel-title">💡 SUGERENCIA · TAX-LOSS HARVESTING</div>
+      <div class="fiscal-tlh">
+        <p>Tienes ${perdedores.length} producto(s) con pérdidas latentes que podrían compensar futuras ganancias:</p>
+        <ul>
+          ${perdedores.map(p => `<li><strong>${esc(p.nombre)}</strong>: <span style="color:var(--red)">${fmtE(p.ganancia)}</span></li>`).join("")}
+        </ul>
+        <p class="fiscal-tlh-info">Si materializas estas pérdidas vendiéndolas, podrás compensar hasta ${fmtE(Math.abs(perdedores.reduce((s,p)=>s+p.ganancia,0)))} de ganancias futuras (4 años) y ahorrar impuestos.</p>
+      </div>
+    </div>` : "";
+
+  $("#main").innerHTML = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">FISCALIDAD · D-100 SIMULADO</h2>
+        <div class="subtitle">Estimación informativa de plusvalías · No es asesoramiento fiscal</div>
+      </div>
+    </div>
+    ${kpisHTML}
+    ${tramosHTML}
+    ${simHTML}
+    ${tlhHTML}
+  `;
+
+  // Bindings de los inputs por producto
+  $$('[data-fiscal-vender]').forEach(inp => {
+    inp.oninput = debounce((e) => {
+      const id = e.target.dataset.fiscalVender;
+      const v  = parseFloat(e.target.value) || 0;
+      state.fiscalSim[id] = Math.max(0, v);
+      renderFiscal();
+    }, 200);
+  });
+  $$('[data-pct]').forEach(b => b.onclick = () => {
+    const pct = parseFloat(b.dataset.pct) / 100;
+    filas.forEach(f => { state.fiscalSim[f.id] = f.valorActual * pct; });
+    renderFiscal();
+  });
+}
+
 function renderObjetivos(productoId, valorActual) {
   const norm = v => (v == null || v === "total") ? null : v;
   const target = norm(productoId);
@@ -2546,7 +3275,8 @@ function renderObjetivos(productoId, valorActual) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function openEntryModal(entry = null) {
-  if (state.tab === "total" || state.tab === "proyeccion" || state.tab === "fire") return;
+  if (state.tab === "total" || state.tab === "proyeccion" || state.tab === "fire"
+      || state.tab === "asignacion" || state.tab === "diff" || state.tab === "fiscal") return;
   state.editEntradaId = entry?.id || null;
   const prod   = state.productos.find(p => p.id === state.tab);
   const accent = getAccentColor();
@@ -2561,9 +3291,60 @@ function openEntryModal(entry = null) {
   $("#meValor").value           = entry?.valor    ?? "";
   $("#meNota").value            = entry?.nota     ?? "";
   recalcMETotal();
+  setupCalcHelper(prod);
   $("#meSave").style.background = accent;
   $(".modal", $("#modalEntrada")).style.border = `1px solid ${accent}25`;
   $("#modalEntrada").classList.add("open");
+}
+
+// Configura la calculadora "unidades × precio" en el modal de entrada
+function setupCalcHelper(prod) {
+  const helper = $("#calcHelper");
+  if (!prod) { helper.style.display = "none"; return; }
+  const tieneUnidades = Number.isFinite(+prod.unidades) && +prod.unidades > 0;
+  const tieneCripto   = !!prod.coingeckoId;
+  const tienePrecMan  = Number.isFinite(+prod.precioManual) && +prod.precioManual > 0;
+  if (!tieneUnidades && !tieneCripto && !tienePrecMan) {
+    helper.style.display = "none";
+    return;
+  }
+  helper.style.display = "block";
+  $("#calcUnidades").value = tieneUnidades ? +prod.unidades : "";
+  const price = getProductPriceSync(prod);
+  if (price) {
+    $("#calcPrecio").value = price.eur;
+    $("#calcSource").textContent = price.source === "coingecko"
+      ? `CoinGecko · ${priceAgeLabel(price.ts)}`
+      : "Precio manual del producto";
+  } else {
+    $("#calcPrecio").value = "";
+    $("#calcSource").textContent = "Introduce un precio";
+  }
+  // Si tiene coingeckoId pero la caché está fría, dispara refresh y actualiza
+  if (tieneCripto && (!priceCache[prod.coingeckoId] ||
+      Date.now() - priceCache[prod.coingeckoId].ts >= COINGECKO_TTL)) {
+    fetchCoinGeckoPrice(prod.coingeckoId).then(res => {
+      if (res && $("#modalEntrada").classList.contains("open")) {
+        $("#calcPrecio").value = res.eur;
+        $("#calcSource").textContent = `CoinGecko · ${priceAgeLabel(res.ts)}`;
+        recalcCalcResult();
+      }
+    });
+  }
+  recalcCalcResult();
+}
+
+function recalcCalcResult() {
+  const u = parseFloat($("#calcUnidades").value);
+  const p = parseFloat($("#calcPrecio").value);
+  const r = $("#calcResult");
+  if (Number.isFinite(u) && Number.isFinite(p) && u > 0 && p > 0) {
+    r.textContent = fmtE(u * p);
+    r.classList.add("ready");
+  } else {
+    r.textContent = "—";
+    r.classList.remove("ready");
+  }
 }
 
 function recalcMETotal() {
@@ -2601,6 +3382,11 @@ function openProdModal(prod = null) {
   $("#mpTipologia").value   = prod?.tipologia || "";
   $("#mpDivisa").value      = prod?.divisa || (prod ? "" : "EUR");
   $("#mpComentarios").value = prod?.comentarios || "";
+  $("#mpUnidades").value      = prod?.unidades      ?? "";
+  $("#mpPrecioManual").value  = prod?.precioManual  ?? "";
+  $("#mpCoingeckoId").value   = prod?.coingeckoId   || "";
+  $("#mpAsignacion").value    = prod?.asignacionObjetivo ?? "";
+  $("#mpCoinGeckoStatus").textContent = "";
   $("#mpTipologiaList").innerHTML = TIPOLOGIAS.map(t => `<option value="${esc(t)}"></option>`).join("");
   $("#mpDivisaList").innerHTML    = DIVISAS.map(d => `<option value="${esc(d)}"></option>`).join("");
   state.productoColor       = prod?.color || COLORES[0];
@@ -2608,8 +3394,25 @@ function openProdModal(prod = null) {
   $("#mpSave").textContent  = prod ? "GUARDAR CAMBIOS" : "CREAR PRODUCTO";
   renderColorPicker();
   refreshProdSaveBtn();
+  if (prod?.coingeckoId) verifyCoinGeckoId(prod.coingeckoId);
   $("#modalProd").classList.add("open");
   closeDrawer();
+}
+
+async function verifyCoinGeckoId(id) {
+  const el = $("#mpCoinGeckoStatus");
+  if (!el) return;
+  if (!id) { el.textContent = ""; el.className = "field-hint"; return; }
+  el.textContent = "Verificando…";
+  el.className = "field-hint";
+  const res = await fetchCoinGeckoPrice(id);
+  if (res && Number.isFinite(res.eur)) {
+    el.textContent = `✓ ${fmtE(res.eur)} · CoinGecko`;
+    el.className = "field-hint ok";
+  } else {
+    el.textContent = `✗ ID no encontrado en CoinGecko`;
+    el.className = "field-hint err";
+  }
 }
 
 function renderColorPicker() {
@@ -2637,24 +3440,43 @@ function saveProd() {
   const tipologia   = $("#mpTipologia").value.trim();
   const divisa      = $("#mpDivisa").value.trim().toUpperCase();
   const comentarios = $("#mpComentarios").value.trim();
+  const numOrZero = (id) => {
+    const v = parseFloat($(id).value);
+    return Number.isFinite(v) && v >= 0 ? v : 0;
+  };
+  const unidades     = numOrZero("#mpUnidades");
+  const precioManual = numOrZero("#mpPrecioManual");
+  const coingeckoId  = $("#mpCoingeckoId").value.trim().toLowerCase();
+  const asignRaw     = parseFloat($("#mpAsignacion").value);
+  const asignacion   = Number.isFinite(asignRaw) ? Math.max(0, Math.min(100, asignRaw)) : 0;
   if (state.editProdId) {
     const prod = state.productos.find(p => p.id === state.editProdId);
     if (prod) {
-      prod.nombre      = nombre;
-      prod.referencia  = referencia;
-      prod.tipologia   = tipologia;
-      prod.divisa      = divisa;
-      prod.comentarios = comentarios;
-      prod.color       = state.productoColor;
+      prod.nombre             = nombre;
+      prod.referencia         = referencia;
+      prod.tipologia          = tipologia;
+      prod.divisa             = divisa;
+      prod.comentarios        = comentarios;
+      prod.color              = state.productoColor;
+      prod.unidades           = unidades;
+      prod.precioManual       = precioManual;
+      prod.coingeckoId        = coingeckoId;
+      prod.asignacionObjetivo = asignacion;
     }
   } else {
     const id = `prod_${Date.now()}`;
-    state.productos.push({ id, nombre, referencia, tipologia, divisa, comentarios, color: state.productoColor });
+    state.productos.push({
+      id, nombre, referencia, tipologia, divisa, comentarios,
+      color: state.productoColor,
+      unidades, precioManual, coingeckoId,
+      asignacionObjetivo: asignacion,
+    });
     state.entradas[id] = [];
     state.tab          = id;
     state.vistaAno     = false;
   }
   state.editProdId = null;
+  if (coingeckoId) fetchCoinGeckoPrice(coingeckoId);
   saveState();
   $("#modalProd").classList.remove("open");
   render();
@@ -2986,9 +3808,10 @@ function handleShortcut(e) {
 
   const k = e.key.toLowerCase();
 
+  const _reservadosShortcut = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal"]);
   switch (k) {
     case "n":
-      if (state.tab !== "total" && state.tab !== "proyeccion" && state.tab !== "fire") {
+      if (!_reservadosShortcut.has(state.tab)) {
         e.preventDefault(); openEntryModal();
       }
       break;
@@ -3012,7 +3835,7 @@ function handleShortcut(e) {
       render();
       break;
     case "v":
-      if (state.tab !== "proyeccion" && state.tab !== "fire") {
+      if (!_reservadosShortcut.has(state.tab) || state.tab === "total") {
         e.preventDefault();
         state.vistaAno = !state.vistaAno;
         render();
@@ -3021,6 +3844,27 @@ function handleShortcut(e) {
     case "f":
       e.preventDefault();
       state.tab = "fire";
+      state.vistaAno = false;
+      closeDrawer();
+      render();
+      break;
+    case "a":
+      e.preventDefault();
+      state.tab = "asignacion";
+      state.vistaAno = false;
+      closeDrawer();
+      render();
+      break;
+    case "c":
+      e.preventDefault();
+      state.tab = "diff";
+      state.vistaAno = false;
+      closeDrawer();
+      render();
+      break;
+    case "t":
+      e.preventDefault();
+      state.tab = "fiscal";
       state.vistaAno = false;
       closeDrawer();
       render();
@@ -3115,6 +3959,9 @@ function bindGlobals() {
   $("#btnProyeccion").onclick    = () => { state.tab = "proyeccion"; state.vistaAno = false; closeDrawer(); render(); };
   $("#btnObjetivos").onclick     = openObjetivosModal;
   $("#btnFire").onclick          = () => { state.tab = "fire"; state.vistaAno = false; closeDrawer(); render(); };
+  $("#btnAsignacion").onclick    = () => { state.tab = "asignacion"; state.vistaAno = false; closeDrawer(); render(); };
+  $("#btnDiff").onclick          = () => { state.tab = "diff"; state.vistaAno = false; closeDrawer(); render(); };
+  $("#btnFiscal").onclick        = () => { state.tab = "fiscal"; state.vistaAno = false; closeDrawer(); render(); };
   $("#btnChangelog").onclick     = openChangelog;
   $("#btnNewProdDrawer").onclick = openProdModal;
 
@@ -3129,6 +3976,32 @@ function bindGlobals() {
   $("#objNombre").oninput = refreshObjSaveBtn;
   $("#objMeta").oninput   = refreshObjSaveBtn;
   ["meManual","meSaveback","meRoundup"].forEach(id => $("#" + id).oninput = recalcMETotal);
+
+  // Calculadora de unidades × precio en modal entrada
+  ["calcUnidades","calcPrecio"].forEach(id => {
+    const el = $("#" + id);
+    if (el) el.oninput = recalcCalcResult;
+  });
+  if ($("#calcApply")) $("#calcApply").onclick = () => {
+    const u = parseFloat($("#calcUnidades").value);
+    const p = parseFloat($("#calcPrecio").value);
+    if (Number.isFinite(u) && Number.isFinite(p) && u > 0 && p > 0) {
+      $("#meValor").value = (u * p).toFixed(2);
+    }
+  };
+
+  // Validación CoinGecko ID al perder foco / pulsar Enter
+  if ($("#mpCoingeckoId")) {
+    let coinTimer = null;
+    $("#mpCoingeckoId").oninput = () => {
+      clearTimeout(coinTimer);
+      const v = $("#mpCoingeckoId").value.trim().toLowerCase();
+      $("#mpCoinGeckoStatus").textContent = v ? "…" : "";
+      $("#mpCoinGeckoStatus").className = "field-hint";
+      coinTimer = setTimeout(() => verifyCoinGeckoId(v), 600);
+    };
+  }
+
   $$('[data-close]').forEach(b => b.onclick = () => $("#" + b.dataset.close).classList.remove("open"));
   $$('.modal-bg').forEach(bg => bg.onclick = (e) => { if (e.target === bg) bg.classList.remove("open"); });
 

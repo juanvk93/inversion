@@ -85,6 +85,27 @@
         <div class="di-sub">Independencia financiera</div>
       </div>
     </button>
+    <button class="drawer-item" id="btnAsignacion">
+      <span class="di-icon">⎄</span>
+      <div class="di-body">
+        <div class="di-title">ASIGNACIÓN</div>
+        <div class="di-sub">Drift y sugerencia de aportación</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnDiff">
+      <span class="di-icon">⇔</span>
+      <div class="di-body">
+        <div class="di-title">COMPARAR SNAPSHOTS</div>
+        <div class="di-sub">Evolución entre dos puntos guardados</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnFiscal">
+      <span class="di-icon">€</span>
+      <div class="di-body">
+        <div class="di-title">FISCALIDAD</div>
+        <div class="di-sub">Simulador D-100 (plusvalías)</div>
+      </div>
+    </button>
   </div>
 
   <div class="drawer-section">
@@ -157,6 +178,9 @@
       <div><kbd>M</kbd><span>Menú lateral</span></div>
       <div><kbd>P</kbd><span>Proyección</span></div>
       <div><kbd>F</kbd><span>Plan FIRE</span></div>
+      <div><kbd>A</kbd><span>Asignación</span></div>
+      <div><kbd>C</kbd><span>Comparar snapshots</span></div>
+      <div><kbd>T</kbd><span>Fiscalidad</span></div>
       <div><kbd>V</kbd><span>Cambiar mes / año</span></div>
       <div><kbd>1</kbd>–<kbd>9</kbd><span>Cambiar pestaña</span></div>
       <div><kbd>Esc</kbd><span>Cerrar diálogos</span></div>
@@ -211,7 +235,30 @@
       <label>VALOR REAL ACTUAL (€)</label>
       <input type="number" step="0.01" placeholder="4450" id="meValor">
     </div>
-    <div class="field" style="margin-bottom:24px">
+    <div class="calc-helper" id="calcHelper" style="display:none">
+      <div class="calc-head">
+        <span class="calc-title">CALCULADORA · UNIDADES × PRECIO</span>
+        <span class="calc-source" id="calcSource"></span>
+      </div>
+      <div class="calc-grid">
+        <div class="calc-cell">
+          <input type="number" step="any" min="0" id="calcUnidades" placeholder="0">
+          <div class="sublabel">UNIDADES</div>
+        </div>
+        <div class="calc-cell calc-op">×</div>
+        <div class="calc-cell">
+          <input type="number" step="any" min="0" id="calcPrecio" placeholder="0,00">
+          <div class="sublabel">PRECIO €/u</div>
+        </div>
+        <div class="calc-cell calc-op">=</div>
+        <div class="calc-cell">
+          <div class="calc-result" id="calcResult">—</div>
+          <div class="sublabel">VALOR</div>
+        </div>
+      </div>
+      <button type="button" class="calc-apply" id="calcApply">USAR COMO VALOR REAL</button>
+    </div>
+    <div class="field" style="margin-bottom:24px;margin-top:18px">
       <label>NOTA DEL MES (opcional)</label>
       <textarea rows="2" id="meNota" placeholder="Ej: corrección de mercado, aporte extra por bonus..."></textarea>
     </div>
@@ -384,6 +431,40 @@
     <div class="field">
       <label>COMENTARIOS</label>
       <textarea id="mpComentarios" rows="3" placeholder="Estrategia, riesgo, notas personales..."></textarea>
+    </div>
+    <div class="field-row field-row-2">
+      <div class="field">
+        <label>UNIDADES <span class="lbl-hint">(opcional)</span></label>
+        <input type="number" step="any" min="0" id="mpUnidades" placeholder="0">
+      </div>
+      <div class="field">
+        <label>PRECIO ACTUAL (€) <span class="lbl-hint">(opcional)</span></label>
+        <input type="number" step="any" min="0" id="mpPrecioManual" placeholder="0,00">
+      </div>
+    </div>
+    <div class="field">
+      <label>COINGECKO ID <span class="lbl-hint">(solo cripto, opcional)</span></label>
+      <input type="text" id="mpCoingeckoId" list="mpCoingeckoList" placeholder="bitcoin, ethereum, cardano, solana...">
+      <datalist id="mpCoingeckoList">
+        <option value="bitcoin"></option>
+        <option value="ethereum"></option>
+        <option value="cardano"></option>
+        <option value="solana"></option>
+        <option value="polkadot"></option>
+        <option value="ripple"></option>
+        <option value="dogecoin"></option>
+        <option value="binancecoin"></option>
+        <option value="tron"></option>
+        <option value="chainlink"></option>
+        <option value="avalanche-2"></option>
+        <option value="matic-network"></option>
+        <option value="litecoin"></option>
+      </datalist>
+      <div class="field-hint" id="mpCoinGeckoStatus"></div>
+    </div>
+    <div class="field">
+      <label>% OBJETIVO EN CARTERA <span class="lbl-hint">(para asignación, opcional)</span></label>
+      <input type="number" step="0.1" min="0" max="100" id="mpAsignacion" placeholder="0">
     </div>
     <div class="field" style="margin-bottom:26px">
       <label>COLOR</label>

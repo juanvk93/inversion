@@ -3,7 +3,7 @@
    - Pre-caché de assets locales en install
    - CDN externos (Chart.js, Google Fonts) se cachean bajo demanda */
 
-const CACHE = "cartera-v26";
+const CACHE = "cartera-v29";
 const ASSETS = [
   "./",
   "./index.html",

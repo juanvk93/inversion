@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#080C12">
 <meta name="description" content="Seguimiento personal de cartera de inversiones">
 <!-- PWA / iOS Safari -->
@@ -292,6 +292,27 @@
 
     <!-- Entradas del changelog -->
     <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.6</span>
+          <span class="cl-ver-date">Mayo 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Precios automáticos vía CoinGecko</strong>: campo <kbd>CoinGecko ID</kbd> por producto con validación en vivo + caché 5 min. Badge "precio/u · hace N min" en la cabecera del producto</li>
+          <li><strong>Unidades y precio manual</strong> por producto (para ETFs/acciones que CoinGecko no cubre)</li>
+          <li><strong>Calculadora "unidades × precio = valor"</strong> en el modal de Nueva Entrada</li>
+          <li><strong>Vista ASIGNACIÓN</strong> — atajo <kbd>A</kbd>: drift de cartera vs % objetivo por producto + simulador "Voy a aportar X €" que distribuye minimizando desviación</li>
+          <li><strong>Vista COMPARAR SNAPSHOTS</strong> — atajo <kbd>C</kbd>: diff entre dos snapshots (o snapshot vs estado actual) con delta por producto</li>
+          <li><strong>Vista FISCALIDAD</strong> — atajo <kbd>T</kbd>: simulador D-100 con tramos 2026 (19/21/23/27/28%), venta parcial por producto, compensación pérdidas/ganancias y sugerencia de tax-loss harvesting</li>
+          <li><strong>Exportar e Importar JSON</strong>: backup completo (productos con metadatos, entradas, objetivos, preferencias FIRE)</li>
+          <li>Nuevo KPI <strong>MEJOR MES</strong> y grid de KPIs reorganizado a 4×2 (más cómodo en móvil)</li>
+          <li>Panel <strong>KPIs avanzados</strong> al final de cada producto: Sortino, Aportación mensual media, Racha máx positiva, % DCA Automático</li>
+          <li>Drawer reorganizado: PRODUCTOS y VISTAS en la parte superior; ajustes de keyboard shortcuts</li>
+          <li>Mejoras móvil: tabs en 2 fila independiente con scroll, botones EDITAR/ELIMINAR agrupados, placeholder claro cuando el filtro de periodo deja menos de 2 entradas</li>
+          <li>Manifest PWA mejorado: <code>id</code>, <code>display_override</code>, <code>categories</code>, iconos <code>any</code>/<code>maskable</code> separados, meta tags iOS para instalación standalone</li>
+        </ul>
+      </div>
 
       <div class="cl-version">
         <div class="cl-ver-head">

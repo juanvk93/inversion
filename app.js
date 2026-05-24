@@ -1811,9 +1811,6 @@ function renderTabActual() {
   } else {
     tirActual = calcTIR(state.entradas[state.tab] || []);
   }
-  const vol    = calcVolatilidad(filasFull);
-  const sharpe = calcSharpe(filasFull, tirActual);
-
   // Streak (basado en datos completos, no afectado por filtro)
   const streak = esTotal ? calcStreakTotal() : calcStreakProducto(state.entradas[state.tab] || []);
 
@@ -1883,9 +1880,12 @@ function renderTabActual() {
     return;
   }
 
-  const maxDd     = calcMaxDrawdown(filasFull);
-  const mejorMes  = calcMejorMes(filasFull);
+  const mejorMes   = calcMejorMes(filasFull);
+  const aportMedia = calcAportacionMedia(filasFull, 3);
+  const racha      = calcRachaMaxPositiva(filasFull);
+  const dcaAuto    = calcDCAAutomatico(ultima);
   const kpis = [
+    // Fila 1
     { l: "VALOR ACTUAL", v: fmtE(ultima.valor),    s: `Aportado: ${fmtE(ultima.acumAportado)}`,
       c: accent,
       tip: `Desglose del total aportado:\n• Manual: ${fmtE(ultima.acumManual)}\n• Saveback: ${fmtE(ultima.acumSaveback)}\n• Round-up: ${fmtE(ultima.acumRoundup)}` },
@@ -1901,26 +1901,27 @@ function renderTabActual() {
       s: mejorMes != null ? labelMes(mejorMes.fecha) : "Sin datos suficientes",
       c: mejorMes == null ? "var(--dimmer)" : (mejorMes.rentMes >= 0 ? "var(--green)" : "var(--red)"),
       tip: "Mayor rentabilidad mensual registrada. Útil para contextualizar las caídas: cuando aparezca un mes muy malo, este KPI te recuerda que también puede haber meses muy buenos en la otra dirección." },
+    // Fila 2
     { l: "TIR ANUALIZADA",
       v: tirActual != null ? `${tirActual>=0?"+":""}${fmt(tirActual*100)}%` : "—",
       s: tirActual != null ? `XIRR · ${filasFull.length} meses` : "Datos insuficientes",
       c: tirActual == null ? "var(--dimmer)" : (tirActual>=0 ? "var(--green)" : "var(--red)"),
       tip: "Tasa Interna de Retorno anualizada (XIRR). Pondera el momento exacto de cada aportación. Es la rentabilidad anual constante que habría producido el mismo resultado que tu historial real." },
-    { l: "DRAWDOWN MÁX",
-      v: maxDd != null ? `-${fmt(maxDd)}%` : "—",
-      s: maxDd != null ? "Máx. caída desde pico" : "Sin datos suficientes",
-      c: maxDd != null && maxDd > 0.01 ? "var(--red)" : "var(--dimmer)",
-      tip: "Mayor caída desde un pico histórico hasta el siguiente valle (en % sobre el valor de cartera). Mide el peor momento que has vivido antes de recuperarte. Un −20% significa que la cartera llegó a valer un 20% menos que su máximo anterior." },
-    { l: "VOLATILIDAD",
-      v: vol != null ? `${fmt(vol)}%` : "—",
-      s: vol != null ? "Anualizada (×√12)" : "Mín. 3 meses",
-      c: vol == null ? "var(--dimmer)" : (vol > 20 ? "var(--red)" : vol > 10 ? "var(--yellow)" : "var(--green)"),
-      tip: "Desviación estándar de las rentabilidades mensuales, anualizada (×√12). Cuantifica la dispersión de tus retornos respecto a la media. Mayor volatilidad implica mayor riesgo e incertidumbre sobre el resultado futuro." },
-    { l: "SHARPE",
-      v: sharpe != null ? fmt(sharpe) : "—",
-      s: sharpe != null ? (sharpe >= 2 ? "Excelente" : sharpe >= 1 ? "Bueno" : sharpe >= 0 ? "Moderado" : "Negativo") : "Sin datos",
-      c: sharpe == null ? "var(--dimmer)" : (sharpe >= 2 ? "var(--green)" : sharpe >= 1 ? "var(--yellow)" : sharpe >= 0 ? "var(--mute)" : "var(--red)"),
-      tip: "Ratio de Sharpe: rentabilidad anual (XIRR) dividida entre la volatilidad anualizada. Mide la rentabilidad obtenida por cada unidad de riesgo asumido. Por encima de 1 se considera bueno; por encima de 2, excelente." },
+    { l: "APORTACIÓN MEDIA",
+      v: aportMedia != null ? fmtE(aportMedia) : "—",
+      s: aportMedia != null ? `Últimos ${Math.min(3, filasFull.length)} meses` : "Sin datos",
+      c: aportMedia == null ? "var(--dimmer)" : "var(--text)",
+      tip: "Aportación total mensual media (manual + saveback + round-up) de los últimos meses. Mide tu ritmo real de DCA." },
+    { l: "RACHA POSITIVA",
+      v: racha > 0 ? `${racha} ${racha === 1 ? "mes" : "meses"}` : "—",
+      s: racha > 0 ? "Máx. meses al alza seguidos" : "Aún no hay rachas",
+      c: racha === 0 ? "var(--red)" : (racha > 5 ? "var(--green)" : racha >= 3 ? "var(--yellow)" : "var(--text)"),
+      tip: "Mayor número de meses consecutivos cerrando en positivo. Indicador del 'mejor tramo' que ha tenido el producto." },
+    { l: "DCA AUTOMÁTICO",
+      v: dcaAuto != null ? `${fmt(dcaAuto)}%` : "—",
+      s: dcaAuto != null ? "Saveback + Round-up sobre total" : "Sin aportaciones",
+      c: dcaAuto == null ? "var(--dimmer)" : (dcaAuto >= 30 ? "var(--green)" : dcaAuto >= 10 ? "var(--yellow)" : "var(--mute)"),
+      tip: "Porcentaje del total aportado que viene de Saveback + Round-up frente a aportaciones manuales. Mide cuánto de tu inversión es 'esfuerzo cero' (automatizada)." },
   ];
   html += `<div class="kpis">${kpis.map(k => `
     <div class="kpi">
@@ -2251,15 +2252,20 @@ function renderResumenFiscal(filas) {
 }
 
 // Panel de KPIs avanzados al final de la vista (debajo del Resumen Fiscal).
-// Sortino · Aportación mensual media · Racha máx positiva · DCA Automático.
+// Sharpe · Sortino · Volatilidad · Drawdown Máx (métricas de riesgo).
 function renderKpisExtra(filasFull, ultima, tirAnual) {
   if (!filasFull?.length) return "";
-  const sortino     = calcSortino(filasFull, tirAnual);
-  const aportMedia  = calcAportacionMedia(filasFull, 3);
-  const racha       = calcRachaMaxPositiva(filasFull);
-  const dcaAuto     = calcDCAAutomatico(ultima);
+  const vol     = calcVolatilidad(filasFull);
+  const sharpe  = calcSharpe(filasFull, tirAnual);
+  const sortino = calcSortino(filasFull, tirAnual);
+  const maxDd   = calcMaxDrawdown(filasFull);
 
   const items = [
+    { l: "SHARPE",
+      v: sharpe != null ? fmt(sharpe) : "—",
+      s: sharpe != null ? (sharpe >= 2 ? "Excelente" : sharpe >= 1 ? "Bueno" : sharpe >= 0 ? "Moderado" : "Negativo") : "Sin datos",
+      c: sharpe == null ? "var(--dimmer)" : (sharpe >= 2 ? "var(--green)" : sharpe >= 1 ? "var(--yellow)" : sharpe >= 0 ? "var(--mute)" : "var(--red)"),
+      tip: "Ratio de Sharpe: rentabilidad anual (XIRR) dividida entre la volatilidad anualizada. Mide la rentabilidad obtenida por cada unidad de riesgo asumido. Por encima de 1 se considera bueno; por encima de 2, excelente." },
     { l: "SORTINO",
       v: sortino != null ? fmt(sortino) : "—",
       s: sortino != null
@@ -2268,29 +2274,20 @@ function renderKpisExtra(filasFull, ultima, tirAnual) {
       c: sortino == null ? "var(--dimmer)"
          : (sortino >= 2 ? "var(--green)" : sortino >= 1 ? "var(--yellow)" : sortino >= 0 ? "var(--mute)" : "var(--red)"),
       tip: "Ratio de Sortino: como Sharpe pero solo penaliza la volatilidad negativa (downside deviation). Más justo para activos asimétricos: si el producto sube con saltos grandes y baja con saltos pequeños, Sortino lo refleja mejor." },
-    { l: "APORTACIÓN MEDIA",
-      v: aportMedia != null ? fmtE(aportMedia) : "—",
-      s: aportMedia != null
-        ? `Últimos ${Math.min(3, filasFull.length)} meses`
-        : "Sin datos",
-      c: aportMedia == null ? "var(--dimmer)" : "var(--text)",
-      tip: "Aportación total mensual media (manual + saveback + round-up) de los últimos meses. Mide tu ritmo real de DCA." },
-    { l: "RACHA POSITIVA",
-      v: racha > 0 ? `${racha} ${racha === 1 ? "mes" : "meses"}` : "—",
-      s: racha > 0 ? "Máx. meses al alza seguidos" : "Aún no hay rachas",
-      c: racha === 0 ? "var(--dimmer)" : (racha >= 6 ? "var(--green)" : racha >= 3 ? "var(--yellow)" : "var(--text)"),
-      tip: "Mayor número de meses consecutivos cerrando en positivo. Indicador del 'mejor tramo' que ha tenido el producto." },
-    { l: "DCA AUTOMÁTICO",
-      v: dcaAuto != null ? `${fmt(dcaAuto)}%` : "—",
-      s: dcaAuto != null
-        ? `Saveback + Round-up sobre total`
-        : "Sin aportaciones",
-      c: dcaAuto == null ? "var(--dimmer)" : (dcaAuto >= 30 ? "var(--green)" : dcaAuto >= 10 ? "var(--yellow)" : "var(--mute)"),
-      tip: "Porcentaje del total aportado que viene de Saveback + Round-up frente a aportaciones manuales. Mide cuánto de tu inversión es 'esfuerzo cero' (automatizada)." },
+    { l: "VOLATILIDAD",
+      v: vol != null ? `${fmt(vol)}%` : "—",
+      s: vol != null ? "Anualizada (×√12)" : "Mín. 3 meses",
+      c: vol == null ? "var(--dimmer)" : (vol > 20 ? "var(--red)" : vol > 10 ? "var(--yellow)" : "var(--green)"),
+      tip: "Desviación estándar de las rentabilidades mensuales, anualizada (×√12). Cuantifica la dispersión de tus retornos respecto a la media. Mayor volatilidad implica mayor riesgo e incertidumbre sobre el resultado futuro." },
+    { l: "DRAWDOWN MÁX",
+      v: maxDd != null ? `-${fmt(maxDd)}%` : "—",
+      s: maxDd != null ? "Máx. caída desde pico" : "Sin datos suficientes",
+      c: maxDd != null && maxDd > 0.01 ? "var(--red)" : "var(--dimmer)",
+      tip: "Mayor caída desde un pico histórico hasta el siguiente valle (en % sobre el valor de cartera). Mide el peor momento que has vivido antes de recuperarte. Un −20% significa que la cartera llegó a valer un 20% menos que su máximo anterior." },
   ];
 
   return `<div class="panel" style="margin-top:28px">
-    <div class="panel-title">KPIS AVANZADOS</div>
+    <div class="panel-title">KPIS AVANZADOS · RIESGO</div>
     <div class="kpis kpis-extra">
       ${items.map(k => `
         <div class="kpi">

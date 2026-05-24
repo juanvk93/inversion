@@ -583,6 +583,68 @@ function calcSharpe(filas, tirAnual) {
   return (tirAnual * 100) / vol;
 }
 
+// Sortino: como Sharpe pero solo penaliza la desviación negativa.
+// downside-deviation = sqrt(mean(min(r, 0)^2)) sobre rentabilidades mensuales (%).
+function calcSortino(filas, tirAnual) {
+  if (tirAnual == null) return null;
+  const rents = filas.filter(f => f.rentMes != null).map(f => f.rentMes);
+  if (rents.length < 3) return null;
+  const downsq = rents.map(r => r < 0 ? r * r : 0).reduce((s, v) => s + v, 0);
+  const downDev = Math.sqrt(downsq / rents.length) * Math.sqrt(12);   // anualizada
+  if (downDev === 0) return null;   // no hay meses negativos → indefinido
+  return (tirAnual * 100) / downDev;
+}
+
+// Encuentra el mes con mayor rentabilidad positiva. Devuelve { rent, fecha } o null.
+function calcMejorMes(filas) {
+  let best = null;
+  for (const f of filas) {
+    if (f.rentMes == null) continue;
+    if (!best || f.rentMes > best.rentMes) best = { rentMes: f.rentMes, fecha: f.fecha };
+  }
+  return best && best.rentMes > 0 ? best : best;   // devuelve incluso si es <=0 (mostrar "—" en UI si conviene)
+}
+
+// Encuentra el mes peor. Análogo a calcMejorMes pero por mínimo.
+function calcPeorMes(filas) {
+  let worst = null;
+  for (const f of filas) {
+    if (f.rentMes == null) continue;
+    if (!worst || f.rentMes < worst.rentMes) worst = { rentMes: f.rentMes, fecha: f.fecha };
+  }
+  return worst;
+}
+
+// Racha máxima de meses consecutivos con rentabilidad positiva (rentMes > 0).
+function calcRachaMaxPositiva(filas) {
+  let max = 0, cur = 0;
+  for (const f of filas) {
+    if (f.rentMes == null) continue;
+    if (f.rentMes > 0) { cur++; if (cur > max) max = cur; }
+    else cur = 0;
+  }
+  return max;
+}
+
+// Media de la aportación total mensual (manual + saveback + roundup).
+// Por defecto sobre los últimos N meses con dato; si N <= 0 usa toda la serie.
+function calcAportacionMedia(filas, n = 3) {
+  if (!filas.length) return null;
+  const subset = n > 0 ? filas.slice(-n) : filas;
+  if (!subset.length) return null;
+  const total = subset.reduce((s, f) => s + (f.aportacion || 0), 0);
+  return total / subset.length;
+}
+
+// % de la aportación acumulada que viene de Saveback + Round-up (vs Manual).
+function calcDCAAutomatico(ultima) {
+  if (!ultima) return null;
+  const auto = (ultima.acumSaveback || 0) + (ultima.acumRoundup || 0);
+  const tot  = ultima.acumAportado || 0;
+  if (tot <= 0) return null;
+  return (auto / tot) * 100;
+}
+
 // Box-Muller: muestra de N(0,1)
 function randomNormal() {
   let u = 0, v = 0;
@@ -1821,7 +1883,8 @@ function renderTabActual() {
     return;
   }
 
-  const maxDd = calcMaxDrawdown(filasFull);
+  const maxDd     = calcMaxDrawdown(filasFull);
+  const mejorMes  = calcMejorMes(filasFull);
   const kpis = [
     { l: "VALOR ACTUAL", v: fmtE(ultima.valor),    s: `Aportado: ${fmtE(ultima.acumAportado)}`,
       c: accent,
@@ -1831,6 +1894,13 @@ function renderTabActual() {
       v: varMes != null ? fmtE(varMes) : "—",
       s: varMes != null ? (varMes>=0 ? "↑ vs mes anterior" : "↓ vs mes anterior") : "Sin mes anterior",
       c: varMes == null ? "var(--dimmer)" : (varMes>=0 ? "var(--green)" : "var(--red)") },
+    { l: "MEJOR MES",
+      v: mejorMes != null
+        ? `${mejorMes.rentMes>=0?"+":""}${fmt(mejorMes.rentMes)}%`
+        : "—",
+      s: mejorMes != null ? labelMes(mejorMes.fecha) : "Sin datos suficientes",
+      c: mejorMes == null ? "var(--dimmer)" : (mejorMes.rentMes >= 0 ? "var(--green)" : "var(--red)"),
+      tip: "Mayor rentabilidad mensual registrada. Útil para contextualizar las caídas: cuando aparezca un mes muy malo, este KPI te recuerda que también puede haber meses muy buenos en la otra dirección." },
     { l: "TIR ANUALIZADA",
       v: tirActual != null ? `${tirActual>=0?"+":""}${fmt(tirActual*100)}%` : "—",
       s: tirActual != null ? `XIRR · ${filasFull.length} meses` : "Datos insuficientes",
@@ -1927,6 +1997,7 @@ function renderTabActual() {
   else                  html += renderTablaProd(filas, accent, ultima);
 
   html += renderResumenFiscal(filas);
+  html += renderKpisExtra(filasFull, ultima, tirActual);
 
   $("#main").innerHTML = html;
   bindCommon();
@@ -2176,6 +2247,58 @@ function renderResumenFiscal(filas) {
     <div class="panel-title">RESUMEN FISCAL ANUAL</div>
     <div class="table">${head}${rows}</div>
     ${simVenta}
+  </div>`;
+}
+
+// Panel de KPIs avanzados al final de la vista (debajo del Resumen Fiscal).
+// Sortino · Aportación mensual media · Racha máx positiva · DCA Automático.
+function renderKpisExtra(filasFull, ultima, tirAnual) {
+  if (!filasFull?.length) return "";
+  const sortino     = calcSortino(filasFull, tirAnual);
+  const aportMedia  = calcAportacionMedia(filasFull, 3);
+  const racha       = calcRachaMaxPositiva(filasFull);
+  const dcaAuto     = calcDCAAutomatico(ultima);
+
+  const items = [
+    { l: "SORTINO",
+      v: sortino != null ? fmt(sortino) : "—",
+      s: sortino != null
+        ? (sortino >= 2 ? "Excelente" : sortino >= 1 ? "Bueno" : sortino >= 0 ? "Moderado" : "Negativo")
+        : "Mín. 3 meses o sin caídas",
+      c: sortino == null ? "var(--dimmer)"
+         : (sortino >= 2 ? "var(--green)" : sortino >= 1 ? "var(--yellow)" : sortino >= 0 ? "var(--mute)" : "var(--red)"),
+      tip: "Ratio de Sortino: como Sharpe pero solo penaliza la volatilidad negativa (downside deviation). Más justo para activos asimétricos: si el producto sube con saltos grandes y baja con saltos pequeños, Sortino lo refleja mejor." },
+    { l: "APORTACIÓN MEDIA",
+      v: aportMedia != null ? fmtE(aportMedia) : "—",
+      s: aportMedia != null
+        ? `Últimos ${Math.min(3, filasFull.length)} meses`
+        : "Sin datos",
+      c: aportMedia == null ? "var(--dimmer)" : "var(--text)",
+      tip: "Aportación total mensual media (manual + saveback + round-up) de los últimos meses. Mide tu ritmo real de DCA." },
+    { l: "RACHA POSITIVA",
+      v: racha > 0 ? `${racha} ${racha === 1 ? "mes" : "meses"}` : "—",
+      s: racha > 0 ? "Máx. meses al alza seguidos" : "Aún no hay rachas",
+      c: racha === 0 ? "var(--dimmer)" : (racha >= 6 ? "var(--green)" : racha >= 3 ? "var(--yellow)" : "var(--text)"),
+      tip: "Mayor número de meses consecutivos cerrando en positivo. Indicador del 'mejor tramo' que ha tenido el producto." },
+    { l: "DCA AUTOMÁTICO",
+      v: dcaAuto != null ? `${fmt(dcaAuto)}%` : "—",
+      s: dcaAuto != null
+        ? `Saveback + Round-up sobre total`
+        : "Sin aportaciones",
+      c: dcaAuto == null ? "var(--dimmer)" : (dcaAuto >= 30 ? "var(--green)" : dcaAuto >= 10 ? "var(--yellow)" : "var(--mute)"),
+      tip: "Porcentaje del total aportado que viene de Saveback + Round-up frente a aportaciones manuales. Mide cuánto de tu inversión es 'esfuerzo cero' (automatizada)." },
+  ];
+
+  return `<div class="panel" style="margin-top:28px">
+    <div class="panel-title">KPIS AVANZADOS</div>
+    <div class="kpis kpis-extra">
+      ${items.map(k => `
+        <div class="kpi">
+          <div class="kpi-label">${k.l}${k.tip ? `<span class="kpi-info" tabindex="0" role="button" aria-label="Información sobre ${esc(k.l)}" data-tip="${esc(k.tip)}">i</span>` : ""}</div>
+          <div class="kpi-value" style="color:${k.c}">${k.v}</div>
+          <div class="kpi-sub">${k.s}</div>
+        </div>`).join("")}
+    </div>
   </div>`;
 }
 

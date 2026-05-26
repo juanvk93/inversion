@@ -245,30 +245,7 @@
       <label>VALOR REAL ACTUAL (€)</label>
       <input type="number" step="0.01" placeholder="4450" id="meValor">
     </div>
-    <div class="calc-helper" id="calcHelper" style="display:none">
-      <div class="calc-head">
-        <span class="calc-title">CALCULADORA · UNIDADES × PRECIO</span>
-        <span class="calc-source" id="calcSource"></span>
-      </div>
-      <div class="calc-grid">
-        <div class="calc-cell">
-          <input type="number" step="any" min="0" id="calcUnidades" placeholder="0">
-          <div class="sublabel">UNIDADES</div>
-        </div>
-        <div class="calc-cell calc-op">×</div>
-        <div class="calc-cell">
-          <input type="number" step="any" min="0" id="calcPrecio" placeholder="0,00">
-          <div class="sublabel">PRECIO €/u</div>
-        </div>
-        <div class="calc-cell calc-op">=</div>
-        <div class="calc-cell">
-          <div class="calc-result" id="calcResult">—</div>
-          <div class="sublabel">VALOR</div>
-        </div>
-      </div>
-      <button type="button" class="calc-apply" id="calcApply">USAR COMO VALOR REAL</button>
-    </div>
-    <div class="field" style="margin-bottom:24px;margin-top:18px">
+    <div class="field" style="margin-bottom:24px">
       <label>NOTA DEL MES (opcional)</label>
       <textarea rows="2" id="meNota" placeholder="Ej: corrección de mercado, aporte extra por bonus..."></textarea>
     </div>
@@ -287,6 +264,34 @@
   </div>
 </div>
 
+<!-- Modal calculadora -->
+<div class="modal-bg" id="modalCalc">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2 id="mcTitle">CALCULADORA</h2>
+      <button class="modal-close" data-close="modalCalc">✕</button>
+    </div>
+    <div class="modal-sub" id="mcSub" style="margin-bottom:14px"></div>
+    <div class="calc-grid">
+      <div class="calc-cell">
+        <input type="number" step="any" min="0" id="mcUnidades" placeholder="0">
+        <div class="sublabel">UNIDADES</div>
+      </div>
+      <div class="calc-cell calc-op">×</div>
+      <div class="calc-cell">
+        <input type="number" step="any" min="0" id="mcPrecio" placeholder="0,00">
+        <div class="sublabel">PRECIO €/u</div>
+      </div>
+      <div class="calc-cell calc-op">=</div>
+      <div class="calc-cell">
+        <div class="calc-result" id="mcResult">—</div>
+        <div class="sublabel">VALOR</div>
+      </div>
+    </div>
+    <div class="field-hint" id="mcSource" style="text-align:center;margin-top:10px"></div>
+  </div>
+</div>
+
 <!-- Modal configuración -->
 <div class="modal-bg" id="modalConfig">
   <div class="modal modal-small">
@@ -294,13 +299,37 @@
       <h2>CONFIGURACIÓN</h2>
       <button class="modal-close" data-close="modalConfig">✕</button>
     </div>
+
     <div class="field">
-      <label>TWELVE DATA API KEY <span class="lbl-hint">(para precios de ETFs)</span></label>
+      <label>PROVEEDOR DE PRECIOS ETF</label>
+      <div class="cfg-card-group">
+        <label class="cfg-card">
+          <input type="radio" name="cfgProvider" value="twelvedata">
+          <span class="cfg-card-check" aria-hidden="true">✓</span>
+          <span class="cfg-card-body">
+            <strong>Twelve Data</strong>
+            <small>Requiere API key · formato MIC (ej. IWDA.XAMS)</small>
+          </span>
+        </label>
+        <label class="cfg-card">
+          <input type="radio" name="cfgProvider" value="yahoo">
+          <span class="cfg-card-check" aria-hidden="true">✓</span>
+          <span class="cfg-card-body">
+            <strong>Yahoo Finance</strong>
+            <small>Sin clave · vía proxy CORS · formato suffix (ej. IWDA.AS)</small>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="field" id="cfgTDKeyField">
+      <label>TWELVE DATA API KEY <span class="lbl-hint">(solo si usas Twelve Data)</span></label>
       <input type="text" id="cfgTwelveDataKey" placeholder="Tu API key de twelvedata.com..." autocomplete="off" spellcheck="false">
       <div class="field-hint">
         Regístrate gratis en <strong>twelvedata.com</strong> · 800 peticiones/día sin coste. La key se guarda solo en este dispositivo (IndexedDB).
       </div>
     </div>
+
     <button class="save-btn" id="cfgSave" style="margin-top:24px">GUARDAR</button>
   </div>
 </div>
@@ -527,23 +556,9 @@
       <div class="field-hint" id="mpCoinGeckoStatus"></div>
     </div>
     <div class="field">
-      <label>TWELVE DATA TICKER <span class="lbl-hint">(SÍMBOLO.MIC — ej. IWDA.XAMS, opcional)</span></label>
-      <input type="text" id="mpTDTicker" list="mpTDList" placeholder="IWDA.XAMS, EUNL.XETR, CSPX.XMIL...">
-      <datalist id="mpTDList">
-        <option value="IWDA.XAMS">MSCI World · Amsterdam · EUR</option>
-        <option value="EUNL.XETR">MSCI World · Xetra · EUR</option>
-        <option value="VWCE.XETR">FTSE All-World · Xetra · EUR</option>
-        <option value="VWRL.XAMS">FTSE All-World dist · Amsterdam · EUR</option>
-        <option value="SXR8.XETR">S&amp;P 500 · Xetra · EUR</option>
-        <option value="CSPX.XMIL">S&amp;P 500 · Milán · EUR</option>
-        <option value="CSSPX.XMIL">S&amp;P 500 (alt) · Milán · EUR</option>
-        <option value="EIMI.XMIL">MSCI EM IMI · Milán · EUR</option>
-        <option value="IS3N.XETR">MSCI EM IMI · Xetra · EUR</option>
-        <option value="SXRV.XETR">Nasdaq 100 · Xetra · EUR</option>
-        <option value="EXSA.XETR">STOXX Europe 600 · Xetra · EUR</option>
-        <option value="SXRT.XETR">EURO STOXX 50 · Xetra · EUR</option>
-      </datalist>
-      <div class="field-hint" id="mpTDStatus"></div>
+      <label>ETF TICKER <span class="lbl-hint" id="mpEtfHint">(formato según provider configurado, opcional)</span></label>
+      <input type="text" id="mpEtfTicker" placeholder="IWDA.AS (Yahoo) o IWDA.XAMS (Twelve Data)...">
+      <div class="field-hint" id="mpEtfStatus"></div>
     </div>
     <div class="field">
       <label>% OBJETIVO EN CARTERA <span class="lbl-hint">(para asignación, opcional)</span></label>

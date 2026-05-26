@@ -54,6 +54,26 @@ const COINGECKO_TTL  = 5 * 60 * 1000;   // 5 minutos de caché
 const TWELVEDATA_BASE = "https://api.twelvedata.com/quote";
 const TWELVEDATA_TTL  = 10 * 60 * 1000;   // 10 min
 
+// Yahoo Finance · API pública del chart endpoint. Yahoo no expone CORS,
+// pasamos el request por un proxy público. Sin clave, formato de ticker tipo
+// IWDA.AS, EUNL.DE, VWCE.DE.
+// Nota: corsproxy.io ya no permite uso gratis fuera de localhost (devuelve 403).
+// Usamos allorigins.win como primario con codetabs como fallback.
+const YAHOO_API = "https://query1.finance.yahoo.com/v8/finance/chart/";
+// Lista de proxies CORS públicos. Se prueban en orden hasta que uno responda
+// con JSON válido. Si todos fallan (saturados/caídos), no se puede usar Yahoo.
+const YAHOO_PROXIES = [
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
+  (u) => `https://cors-proxy.htmldriven.com/?url=${encodeURIComponent(u)}`,
+];
+const YAHOO_TTL = 10 * 60 * 1000;   // 10 min
+
+// Proveedores de precio ETF soportados
+const ETF_PROVIDERS = ["twelvedata", "yahoo"];
+
 // Tramos IRPF 2026 (renta del ahorro, modelo D-100)
 const FISCAL_TRAMOS_2026 = [
   { hasta:    6000, tipo: 0.19 },
@@ -256,6 +276,7 @@ const state = {
   diffSnapB:       "current",    // id del snapshot B o "current"
   fiscalSim:       {},           // { [productoId]: { venderEur: number } }
   // Configuración
+  etfProvider:      "twelvedata", // "twelvedata" | "yahoo"
   twelveDataApiKey: "",          // API key para precios de ETFs vía Twelve Data
 };
 
@@ -264,6 +285,8 @@ const priceCache = {};          // { coingeckoId: { eur, ts } }
 const priceFetching = {};       // { coingeckoId: Promise } — evita duplicados
 const twelveDataCache    = {};       // { ticker: { eur, ts, currency } }
 const twelveDataFetching = {};
+const yahooCache    = {};       // { ticker: { eur, ts, currency } }
+const yahooFetching = {};
 
 const charts = {};
 
@@ -313,6 +336,13 @@ async function loadState() {
       }
       const tdKey = await readField("twelveDataApiKey");
       if (typeof tdKey === "string") state.twelveDataApiKey = tdKey;
+      const etfProv = await readField("etfProvider");
+      if (ETF_PROVIDERS.includes(etfProv)) state.etfProvider = etfProv;
+      // Migración: twelveDataTicker → etfTicker (campo genérico)
+      state.productos.forEach(p => {
+        if (p.twelveDataTicker && !p.etfTicker) p.etfTicker = p.twelveDataTicker;
+        delete p.twelveDataTicker;
+      });
     } else {
       // 2. Primer arranque con IndexedDB: migrar desde localStorage si existe
       const p = JSON.parse(localStorage.getItem(STORE_K_P) || "null");
@@ -370,6 +400,7 @@ function saveState() {
       await writeField("objetivos", state.objetivos);
       await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
       await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
+      await writeField("etfProvider", state.etfProvider || "twelvedata");
       hideSaveError();
     })
     .catch(err => {
@@ -657,6 +688,104 @@ function calcDCAAutomatico(ultima) {
   return (auto / tot) * 100;
 }
 
+// Series normalizadas base 100 por producto. Cada punto = valor / aportado_acumulado × 100.
+// 100 = empate (valor = aportado). >100 ganancia, <100 pérdida.
+// Esta normalización es la correcta para DCA: aísla la rentabilidad real del
+// "tamaño de la posición". El acumulado de aportes se calcula desde el inicio
+// del historial del producto; el `periodo` solo filtra los meses visibles.
+function calcCrecimientoNormalizado(periodo) {
+  const allMonths = new Set();
+  state.productos.forEach(p => {
+    (state.entradas[p.id] || []).forEach(e => allMonths.add(e.fecha));
+  });
+  let labels = [...allMonths].sort();
+  if (labels.length) {
+    const cutoff = calcCutoff(labels.at(-1), periodo);
+    if (cutoff) labels = labels.filter(m => m >= cutoff);
+  }
+  if (!labels.length) return { labels: [], datasets: [] };
+
+  const datasets = state.productos.map(p => {
+    const ents = (state.entradas[p.id] || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+    if (!ents.length) return null;
+    let acumAport = 0;
+    const byMonth = {};
+    // Acumulamos desde el principio para no falsear el ratio al filtrar
+    ents.forEach(e => {
+      acumAport += aportTotal(e);
+      if (acumAport > 0 && Number.isFinite(e.valor)) {
+        byMonth[e.fecha] = (e.valor / acumAport) * 100;
+      }
+    });
+    if (!Object.keys(byMonth).length) return null;
+    const data = labels.map(m => byMonth[m] ?? null);
+    if (data.every(v => v == null)) return null;   // producto sin datos en el rango filtrado
+    return {
+      label: p.nombre,
+      data,
+      borderColor: p.color,
+      backgroundColor: p.color + "1A",
+      tension: 0.25,
+      spanGaps: true,
+      pointRadius: 0,
+      borderWidth: 2,
+      fill: false,
+    };
+  }).filter(Boolean);
+  return { labels: labels.map(labelMes), datasets };
+}
+
+// Contribución de cada producto a la ganancia (€). Aísla la ganancia de mercado:
+//   • periodo "all": ganancia lifetime = valor_actual - aportado_total
+//   • periodo filtrado: ganancia_periodo = valor_fin - valor_inicio - aportes_durante
+// Orden descendente (más a más).
+function calcContribucionGanancia(periodo) {
+  return state.productos.map(p => {
+    const ents = (state.entradas[p.id] || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+    if (!ents.length) return null;
+    let aportado, valor, ganancia;
+    const cutoff = calcCutoff(ents.at(-1).fecha, periodo);
+    if (!cutoff) {
+      // Lifetime
+      aportado = ents.reduce((s, e) => s + aportTotal(e), 0);
+      valor    = ents.at(-1).valor;
+      ganancia = valor - aportado;
+    } else {
+      const inPeriod = ents.filter(e => e.fecha >= cutoff);
+      if (!inPeriod.length) return null;
+      const before = ents.filter(e => e.fecha < cutoff);
+      const valorInicial = before.length ? before.at(-1).valor : 0;
+      valor    = inPeriod.at(-1).valor;
+      aportado = inPeriod.reduce((s, e) => s + aportTotal(e), 0);
+      // Ganancia de mercado en el periodo (revalorización, excluye aportes nuevos)
+      ganancia = valor - valorInicial - aportado;
+    }
+    return {
+      id: p.id, nombre: p.nombre, color: p.color,
+      aportado, valor, ganancia,
+    };
+  }).filter(Boolean).sort((a, b) => b.ganancia - a.ganancia);
+}
+
+// Aportaciones agregadas por año (Manual + Saveback + Round-up). Orden
+// descendente: año más reciente primero (para que aparezca arriba en bar horizontal).
+function calcAportacionesPorAno() {
+  const byYear = {};
+  state.productos.forEach(p => {
+    (state.entradas[p.id] || []).forEach(e => {
+      const year = (e.fecha || "").slice(0, 4);
+      if (!year) return;
+      if (!byYear[year]) byYear[year] = { manual: 0, saveback: 0, roundup: 0 };
+      byYear[year].manual   += +e.manual   || 0;
+      byYear[year].saveback += +e.saveback || 0;
+      byYear[year].roundup  += +e.roundup  || 0;
+    });
+  });
+  return Object.entries(byYear)
+    .sort((a, b) => b[0].localeCompare(a[0]))   // descendente: 2026, 2025, ...
+    .map(([year, d]) => ({ year, ...d, total: d.manual + d.saveback + d.roundup }));
+}
+
 // Box-Muller: muestra de N(0,1)
 function randomNormal() {
   let u = 0, v = 0;
@@ -764,11 +893,11 @@ function tipoMedioEfectivo(ganancia) {
   return calcImpuestoPlusvalia(ganancia) / ganancia;
 }
 
-// Filtra filas por periodo. periodo: "all" | "3m" | "6m" | "ytd" | "1y" | "2y" | "3y" | "5y"
-function filtrarFilas(filas, periodo) {
-  if (!filas?.length || periodo === "all" || !periodo) return filas;
-  const ult = filas.at(-1).fecha;
-  const [uy, um] = ult.split("-").map(Number);
+// Devuelve la fecha de corte (YYYY-MM) para un periodo dado tomando como
+// referencia `ultFecha`. Devuelve null si el periodo es "all" o no aplica.
+function calcCutoff(ultFecha, periodo) {
+  if (!ultFecha || periodo === "all" || !periodo) return null;
+  const [uy, um] = ultFecha.split("-").map(Number);
   let cy = uy, cm = um;
   if      (periodo === "3m") cm -= 2;   // últimos 3 meses incluyendo el actual
   else if (periodo === "6m") cm -= 5;
@@ -778,7 +907,14 @@ function filtrarFilas(filas, periodo) {
   else if (periodo === "5y") cm -= 59;
   else if (periodo === "ytd") { cm = 1; cy = uy; }
   while (cm <= 0) { cm += 12; cy--; }
-  const cutoff = `${cy}-${String(cm).padStart(2,"0")}`;
+  return `${cy}-${String(cm).padStart(2,"0")}`;
+}
+
+// Filtra filas por periodo. periodo: "all" | "3m" | "6m" | "ytd" | "1y" | "2y" | "3y" | "5y"
+function filtrarFilas(filas, periodo) {
+  if (!filas?.length) return filas;
+  const cutoff = calcCutoff(filas.at(-1).fecha, periodo);
+  if (!cutoff) return filas;
   return filas.filter(f => f.fecha >= cutoff);
 }
 
@@ -951,7 +1087,7 @@ function generarJSON() {
       unidades:           Number.isFinite(+p.unidades) ? +p.unidades : 0,
       precioManual:       Number.isFinite(+p.precioManual) ? +p.precioManual : 0,
       coingeckoId:        p.coingeckoId || "",
-      twelveDataTicker:   p.twelveDataTicker || "",
+      etfTicker:          p.etfTicker || "",
       asignacionObjetivo: Number.isFinite(+p.asignacionObjetivo) ? +p.asignacionObjetivo : 0,
     })),
     entradas: Object.fromEntries(
@@ -1028,7 +1164,7 @@ function importarJSON(texto) {
       unidades:           num(p.unidades),
       precioManual:       num(p.precioManual),
       coingeckoId:        String(p.coingeckoId || "").toLowerCase().replace(/[^a-z0-9-]/g, ""),
-      twelveDataTicker:   String(p.twelveDataTicker || "").toUpperCase().replace(/[^A-Z0-9.:^-]/g, ""),
+      etfTicker:          String(p.etfTicker || p.twelveDataTicker || "").toUpperCase().replace(/[^A-Z0-9.:^-]/g, ""),
       asignacionObjetivo: Math.max(0, Math.min(100, num(p.asignacionObjetivo))),
     };
   });
@@ -1259,13 +1395,20 @@ function hideSnapToast() { $("#snapToast").style.display = "none"; }
 function checkSnapReminder() { if (diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast(); }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 5c. PRECIOS · CoinGecko (cripto) + Twelve Data (ETFs) + precio manual
+// 5c. PRECIOS · CoinGecko (cripto) + Twelve Data/Yahoo (ETFs) + precio manual
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Devuelve la caché y función de fetch para el proveedor activo.
+function activeEtfProvider() {
+  return state.etfProvider === "yahoo"
+    ? { source: "yahoo",       cache: yahooCache,      fetch: fetchYahooPrice }
+    : { source: "twelvedata",  cache: twelveDataCache, fetch: fetchTwelveDataPrice };
+}
+
 // Devuelve precio en EUR para un producto. Prioridad:
-//   1. coingeckoId       (cripto, vía CoinGecko)
-//   2. twelveDataTicker  (ETF/acción cotizado en EUR, vía Twelve Data)
-//   3. precioManual      (fallback estático)
+//   1. coingeckoId  (cripto, vía CoinGecko)
+//   2. etfTicker    (ETF/acción cotizado en EUR, vía el provider activo)
+//   3. precioManual (fallback estático)
 function getProductPriceSync(prod) {
   if (!prod) return null;
   if (prod.coingeckoId) {
@@ -1274,10 +1417,11 @@ function getProductPriceSync(prod) {
       return { eur: c.eur, ts: c.ts, source: "coingecko", id: prod.coingeckoId };
     }
   }
-  if (prod.twelveDataTicker) {
-    const c = twelveDataCache[prod.twelveDataTicker];
+  if (prod.etfTicker) {
+    const { source, cache } = activeEtfProvider();
+    const c = cache[prod.etfTicker];
     if (c && Number.isFinite(c.eur)) {
-      return { eur: c.eur, ts: c.ts, source: "twelvedata", id: prod.twelveDataTicker };
+      return { eur: c.eur, ts: c.ts, source, id: prod.etfTicker };
     }
   }
   if (Number.isFinite(+prod.precioManual) && +prod.precioManual > 0) {
@@ -1318,6 +1462,7 @@ async function fetchCoinGeckoPrice(id) {
 // el sufijo se envía como parámetro 'exchange' separado (Twelve Data no acepta
 // el formato combinado).
 async function fetchTwelveDataPrice(ticker) {
+  ticker = (ticker || "").trim();
   if (!ticker) return null;
   const apiKey = (state.twelveDataApiKey || "").trim();
   if (!apiKey) {
@@ -1369,28 +1514,94 @@ async function fetchTwelveDataPrice(ticker) {
   return twelveDataFetching[ticker];
 }
 
-// Refresca en background los precios (CoinGecko y Twelve Data) de todos los
-// productos y vuelve a renderizar si llega algo nuevo. Llamado tras cada render.
+// Yahoo Finance · llama al chart endpoint vía proxy CORS público. No requiere
+// clave. Formato típico de ticker: IWDA.AS, EUNL.DE, VWCE.DE. Valida que la
+// cotización esté en EUR (rechaza otras divisas).
+async function fetchYahooPrice(ticker) {
+  ticker = (ticker || "").trim();
+  if (!ticker) return null;
+  const cached = yahooCache[ticker];
+  if (cached && Number.isFinite(cached.eur) && Date.now() - cached.ts < YAHOO_TTL) return cached;
+  if (yahooFetching[ticker]) return yahooFetching[ticker];
+  yahooFetching[ticker] = (async () => {
+    try {
+      const target = `${YAHOO_API}${encodeURIComponent(ticker)}`;
+      let lastErr  = null;
+      let yahooErr = null;   // error de negocio (de Yahoo, no del proxy) → no reintentar
+      for (let i = 0; i < YAHOO_PROXIES.length; i++) {
+        const url = YAHOO_PROXIES[i](target);
+        try {
+          const r = await fetch(url, { headers: { accept: "application/json" } });
+          if (!r.ok) { lastErr = new Error(`Proxy saturado (HTTP ${r.status})`); continue; }
+          const text = await r.text();
+          const trimmed = text.trimStart();
+          // Algunos proxies devuelven 200 con texto de error (ej. "Edge: Too Many Requests")
+          if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+            lastErr = new Error("Proxy no devolvió JSON");
+            continue;
+          }
+          let data;
+          try { data = JSON.parse(text); }
+          catch { lastErr = new Error("Respuesta JSON inválida"); continue; }
+          const result = data?.chart?.result?.[0];
+          if (!result) {
+            const ye = data?.chart?.error;
+            yahooErr = new Error(ye ? `${ye.description || ye.code}` : "Ticker no encontrado");
+            break;   // error real de Yahoo, no reintentar con otro proxy
+          }
+          const meta     = result.meta || {};
+          const price    = meta.regularMarketPrice;
+          const currency = meta.currency;
+          if (!Number.isFinite(price)) { yahooErr = new Error("Sin precio en respuesta"); break; }
+          if (currency && currency !== "EUR") {
+            yahooErr = new Error(`Cotiza en ${currency}, no en EUR`);
+            break;
+          }
+          yahooCache[ticker] = { eur: price, ts: Date.now(), currency: currency || "EUR" };
+          return yahooCache[ticker];
+        } catch (err) {
+          lastErr = err;   // network/CORS/etc → seguimos al siguiente proxy
+        }
+      }
+      const finalErr = yahooErr || lastErr || new Error("Sin respuesta de Yahoo");
+      const msg = yahooErr ? finalErr.message : `Servicio Yahoo no disponible (${finalErr.message})`;
+      console.warn("[Cartera] Yahoo:", msg);
+      yahooCache[ticker] = { error: msg, ts: Date.now() };
+      return null;
+    } finally {
+      delete yahooFetching[ticker];
+    }
+  })();
+  return yahooFetching[ticker];
+}
+
+// Refresca en background los precios (CoinGecko + ETF provider activo) de todos
+// los productos y vuelve a renderizar si llega algo nuevo. Llamado tras cada render.
 async function refreshAllPricesAsync() {
   const cgIds = state.productos
     .map(p => p.coingeckoId)
     .filter(id => id && (!priceCache[id] || Date.now() - priceCache[id].ts >= COINGECKO_TTL));
-  const tdIds = (state.twelveDataApiKey || "").trim()
+  // ETF provider activo (Twelve Data o Yahoo)
+  const provider = activeEtfProvider();
+  const ttl  = provider.source === "yahoo" ? YAHOO_TTL : TWELVEDATA_TTL;
+  // Twelve Data necesita API key; Yahoo no requiere clave.
+  const etfHabilitado = provider.source === "yahoo" || (state.twelveDataApiKey || "").trim();
+  const etfIds = etfHabilitado
     ? state.productos
-        .map(p => p.twelveDataTicker)
-        .filter(id => id && (!twelveDataCache[id]?.eur || Date.now() - twelveDataCache[id].ts >= TWELVEDATA_TTL))
+        .map(p => p.etfTicker)
+        .filter(id => id && (!provider.cache[id]?.eur || Date.now() - provider.cache[id].ts >= ttl))
     : [];
-  if (!cgIds.length && !tdIds.length) return;
+  if (!cgIds.length && !etfIds.length) return;
 
-  const cgBefore = cgIds.map(id => priceCache[id]?.eur);
-  const tdBefore = tdIds.map(id => twelveDataCache[id]?.eur);
+  const cgBefore  = cgIds.map(id => priceCache[id]?.eur);
+  const etfBefore = etfIds.map(id => provider.cache[id]?.eur);
   await Promise.all([
     ...cgIds.map(fetchCoinGeckoPrice),
-    ...tdIds.map(fetchTwelveDataPrice),
+    ...etfIds.map(provider.fetch),
   ]);
-  const changedCg = cgIds.some((id, i) => priceCache[id]?.eur !== cgBefore[i]);
-  const changedTd = tdIds.some((id, i) => twelveDataCache[id]?.eur !== tdBefore[i]);
-  if ((changedCg || changedTd) && needsPriceRender()) render();
+  const changedCg  = cgIds.some((id, i) => priceCache[id]?.eur !== cgBefore[i]);
+  const changedEtf = etfIds.some((id, i) => provider.cache[id]?.eur !== etfBefore[i]);
+  if ((changedCg || changedEtf) && needsPriceRender()) render();
 }
 
 function needsPriceRender() {
@@ -1414,6 +1625,7 @@ function priceAgeLabel(ts) {
 function priceSourceLabel(source) {
   if (source === "coingecko") return "CG";
   if (source === "twelvedata") return "TD";
+  if (source === "yahoo")      return "YH";
   return "manual";
 }
 
@@ -1719,6 +1931,134 @@ function drawChartPeso(data) {
   });
 }
 
+// Crecimiento normalizado (base 100 = aportado). 100 = empate, >100 ganancia, <100 pérdida.
+function drawChartGrowth(data) {
+  const ctx = $("#chartGrowth")?.getContext("2d");
+  if (!ctx) return;
+  // Añadimos una línea horizontal de referencia en 100 (base = aportado)
+  const refLength = data.labels.length;
+  const dataWithRef = {
+    labels: data.labels,
+    datasets: [
+      ...data.datasets,
+      {
+        label: "Base 100 (aportado)",
+        data: Array(refLength).fill(100),
+        borderColor: "#4B5563",
+        borderWidth: 1, borderDash: [4, 4],
+        pointRadius: 0,
+        fill: false,
+        tension: 0,
+        order: 99,
+      },
+    ],
+  };
+  charts.growth = new Chart(ctx, {
+    type: "line",
+    data: dataWithRef,
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: "#9CA3AF", font: { family: "monospace", size: 10 }, padding: 12, boxWidth: 10, boxHeight: 10,
+            filter: (item) => item.text !== "Base 100 (aportado)" }
+        },
+        tooltip: { ...TOOLTIP_BASE, displayColors: true,
+          callbacks: {
+            label: (c) => {
+              if (c.parsed.y == null) return "";
+              if (c.dataset.label === "Base 100 (aportado)") return "";
+              const delta = c.parsed.y - 100;
+              const signo = delta >= 0 ? "+" : "";
+              return ` ${c.dataset.label}: ${fmt(c.parsed.y)} (${signo}${fmt(delta)}%)`;
+            },
+          }
+        }
+      },
+      scales: gridConfig(v => v.toFixed(0)),
+    }
+  });
+}
+
+// Contribución a la ganancia (€) por producto — barra horizontal.
+function drawChartContribucion(items) {
+  const ctx = $("#chartContrib")?.getContext("2d");
+  if (!ctx) return;
+  charts.contrib = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: items.map(i => i.nombre),
+      datasets: [{
+        data: items.map(i => i.ganancia),
+        backgroundColor: items.map(i => i.color + "CC"),
+        borderColor: items.map(i => i.color),
+        borderWidth: 1,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...TOOLTIP_BASE,
+          callbacks: {
+            label: (c) => {
+              const item = items[c.dataIndex];
+              const pctSobreAport = item.aportado > 0 ? (item.ganancia / item.aportado) * 100 : 0;
+              return ` ${item.ganancia >= 0 ? "+" : ""}${fmtE(item.ganancia)} · ${pctSobreAport >= 0 ? "+" : ""}${fmt(pctSobreAport)}%`;
+            }
+          }
+        }
+      },
+      scales: gridConfig(fmtTickEUR),
+    }
+  });
+}
+
+// Aportaciones por año (Manual / Saveback / Round-up) — barras horizontales apiladas.
+function drawChartAportPorAno(years) {
+  const ctx = $("#chartAportYear")?.getContext("2d");
+  if (!ctx) return;
+  charts.aportYear = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: years.map(y => y.year),
+      datasets: [
+        { label: "Manual",   data: years.map(y => y.manual),   backgroundColor: "#60A5FA", borderRadius: 4 },
+        { label: "Saveback", data: years.map(y => y.saveback), backgroundColor: "#6EE7B7", borderRadius: 4 },
+        { label: "Round-up", data: years.map(y => y.roundup),  backgroundColor: "#A78BFA", borderRadius: 4 },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: "#9CA3AF", font: { family: "monospace", size: 10 }, padding: 12, boxWidth: 10, boxHeight: 10 }
+        },
+        tooltip: { ...TOOLTIP_BASE,
+          callbacks: {
+            label: (c) => ` ${c.dataset.label}: ${fmtE(c.parsed.x)}`,
+            footer: (items) => {
+              const total = items.reduce((s, it) => s + (it.parsed.x || 0), 0);
+              return ` Total: ${fmtE(total)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { stacked: true, grid: { color: "rgba(255,255,255,0.04)" }, border: { display: false }, ticks: { color: "#374151", callback: fmtTickEUR } },
+        y: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: "#374151" } },
+      },
+    }
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 7. RENDER
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1957,6 +2297,7 @@ function renderTabActual() {
         ${streak >= 2 ? `<div class="streak-badge">🔥 ${streak} MES${streak===1?"":"ES"} SEGUIDO${streak===1?"":"S"} APORTANDO</div>` : ""}
       </div>
       ${!esTotal ? `<div class="prod-acts">
+        <button class="btn-icon btn-icon-calc" id="btnCalcProd" title="Calculadora" aria-label="Abrir calculadora">⊞</button>
         <button class="btn-icon btn-icon-edit" id="btnEditProd" title="Editar producto" aria-label="Editar producto">✎</button>
         <button class="btn-icon btn-icon-del"  id="btnDelProd"  title="Eliminar producto" aria-label="Eliminar producto">✕</button>
       </div>` : ""}
@@ -2034,9 +2375,8 @@ function renderTabActual() {
     </div>
   `).join("")}</div>`;
 
-  // Controles (filtro periodo + MES/AÑO + EDITAR/ELIMINAR) debajo de los KPIs
-  html += filterRowHTML;
-
+  // Paneles que NO dependen del filtro temporal (van antes del filter-row):
+  // TIR comparativa y distribución de cartera siempre usan datos completos.
   let tirData = null;
   if (esTotal && state.productos.length > 1) {
     tirData = state.productos.map(p => ({ nombre: p.nombre, tir: calcTIR(state.entradas[p.id] || []), color: p.color }));
@@ -2066,6 +2406,29 @@ function renderTabActual() {
     }
   }
 
+  // Aportaciones por año (Manual + Saveback + Round-up apiladas, descendente)
+  // Es agregación anual, no depende del filtro de periodo.
+  let aportYearData = null;
+  if (esTotal) {
+    aportYearData = calcAportacionesPorAno();
+    if (aportYearData.length) {
+      html += `<div class="panel">
+        <div class="panel-title">APORTACIONES POR AÑO</div>
+        <div class="chart-box" style="height:${Math.max(140, aportYearData.length * 46)}px"><canvas id="chartAportYear"></canvas></div>
+      </div>`;
+    } else {
+      aportYearData = null;
+    }
+  }
+
+  // Controles (filtro periodo + EDITAR/ELIMINAR). Se renderiza justo antes
+  // de los paneles que SÍ dependen del filtro (chartValor en adelante).
+  html += filterRowHTML;
+
+  // Tooltips informativos para los paneles comparativos
+  const tipGrowth = "Compara la rentabilidad real de cada producto sobre tu inversión.\n\nFórmula: valor del producto / aportado acumulado × 100\n\n• 100 = empate (lo que vale = lo que has metido)\n• > 100 = ganancia (porcentaje sobre lo invertido)\n• < 100 = pérdida\n\nEl acumulado de aportes se calcula desde el inicio del producto. El filtro temporal solo limita los meses visibles, no rebase la métrica.";
+  const tipContrib = "Aporte de cada producto a la ganancia de mercado (excluye lo que tú has metido).\n\n• TODO: ganancia lifetime = valor_actual − aportado_total\n• Otros periodos: ganancia_periodo = valor_fin − valor_inicio − aportes_durante\n\nOrden descendente. Tooltip muestra ganancia en € y % sobre lo aportado en el rango.";
+
   // Si el filtro de periodo deja menos de 2 entradas, los gráficos de líneas
   // quedan en blanco (pointRadius: 0 + sin línea). Mostramos un placeholder.
   const sparseFilter = filas.length < 2;
@@ -2088,6 +2451,34 @@ function renderTabActual() {
     <div class="panel-title">HEATMAP RENTABILIDAD MENSUAL (%)</div>
     ${renderHeatmap(filas)}
   </div>`;
+
+  // Crecimiento normalizado (base 100) — depende del filtro de periodo
+  let growthData = null;
+  if (esTotal && state.productos.length > 1) {
+    growthData = calcCrecimientoNormalizado(state.filtroPeriodo);
+    if (growthData.datasets.length > 1 && growthData.labels.length >= 2) {
+      html += `<div class="panel">
+        <div class="panel-title">CRECIMIENTO NORMALIZADO · BASE 100 = APORTADO<span class="kpi-info" tabindex="0" role="button" aria-label="Cómo se calcula este gráfico" data-tip="${esc(tipGrowth)}">i</span></div>
+        <div class="chart-box" style="height:280px"><canvas id="chartGrowth"></canvas></div>
+      </div>`;
+    } else {
+      growthData = null;
+    }
+  }
+
+  // Contribución a la ganancia por producto — depende del filtro de periodo
+  let contribData = null;
+  if (esTotal && state.productos.length > 1) {
+    contribData = calcContribucionGanancia(state.filtroPeriodo);
+    if (contribData.length > 1) {
+      html += `<div class="panel">
+        <div class="panel-title">CONTRIBUCIÓN A LA GANANCIA<span class="kpi-info" tabindex="0" role="button" aria-label="Cómo se calcula este gráfico" data-tip="${esc(tipContrib)}">i</span></div>
+        <div class="chart-box" style="height:${Math.max(120, contribData.length * 42)}px"><canvas id="chartContrib"></canvas></div>
+      </div>`;
+    } else {
+      contribData = null;
+    }
+  }
 
   const histRents = filas.filter(f => f.rentMes != null);
   if (histRents.length >= 3) {
@@ -2115,6 +2506,9 @@ function renderTabActual() {
   if (histRents.length >= 3) drawChartHistograma(filas);
   if (tirData) drawChartTirComp(tirData);
   if (pesoData) drawChartPeso(pesoData);
+  if (growthData)    drawChartGrowth(growthData);
+  if (contribData)   drawChartContribucion(contribData);
+  if (aportYearData) drawChartAportPorAno(aportYearData);
 }
 
 function renderHeatmap(filas) {
@@ -3492,75 +3886,9 @@ function openEntryModal(entry = null) {
   $("#meValor").value           = entry?.valor    ?? "";
   $("#meNota").value            = entry?.nota     ?? "";
   recalcMETotal();
-  setupCalcHelper(prod);
   $("#meSave").style.background = accent;
   $(".modal", $("#modalEntrada")).style.border = `1px solid ${accent}25`;
   $("#modalEntrada").classList.add("open");
-}
-
-// Configura la calculadora "unidades × precio" en el modal de entrada
-function setupCalcHelper(prod) {
-  const helper = $("#calcHelper");
-  if (!prod) { helper.style.display = "none"; return; }
-  const tieneUnidades = Number.isFinite(+prod.unidades) && +prod.unidades > 0;
-  const tieneCripto   = !!prod.coingeckoId;
-  const tieneTD       = !!prod.twelveDataTicker;
-  const tienePrecMan  = Number.isFinite(+prod.precioManual) && +prod.precioManual > 0;
-  if (!tieneUnidades && !tieneCripto && !tieneTD && !tienePrecMan) {
-    helper.style.display = "none";
-    return;
-  }
-  helper.style.display = "block";
-  $("#calcUnidades").value = tieneUnidades ? +prod.unidades : "";
-  const labelFuente = (price) => {
-    if (price.source === "coingecko")  return `CoinGecko · ${priceAgeLabel(price.ts)}`;
-    if (price.source === "twelvedata") return `Twelve Data · ${priceAgeLabel(price.ts)}`;
-    return "Precio manual del producto";
-  };
-  const price = getProductPriceSync(prod);
-  if (price) {
-    $("#calcPrecio").value = price.eur;
-    $("#calcSource").textContent = labelFuente(price);
-  } else {
-    $("#calcPrecio").value = "";
-    $("#calcSource").textContent = "Introduce un precio";
-  }
-  // Si la caché de CoinGecko está fría, dispara refresh
-  if (tieneCripto && (!priceCache[prod.coingeckoId] ||
-      Date.now() - priceCache[prod.coingeckoId].ts >= COINGECKO_TTL)) {
-    fetchCoinGeckoPrice(prod.coingeckoId).then(res => {
-      if (res && $("#modalEntrada").classList.contains("open")) {
-        $("#calcPrecio").value = res.eur;
-        $("#calcSource").textContent = `CoinGecko · ${priceAgeLabel(res.ts)}`;
-        recalcCalcResult();
-      }
-    });
-  }
-  // Si la caché de Twelve Data está fría, dispara refresh (solo si no hay CoinGecko, que tiene prioridad)
-  if (!tieneCripto && tieneTD && (!twelveDataCache[prod.twelveDataTicker]?.eur ||
-      Date.now() - twelveDataCache[prod.twelveDataTicker].ts >= TWELVEDATA_TTL)) {
-    fetchTwelveDataPrice(prod.twelveDataTicker).then(res => {
-      if (res && $("#modalEntrada").classList.contains("open")) {
-        $("#calcPrecio").value = res.eur;
-        $("#calcSource").textContent = `Twelve Data · ${priceAgeLabel(res.ts)}`;
-        recalcCalcResult();
-      }
-    });
-  }
-  recalcCalcResult();
-}
-
-function recalcCalcResult() {
-  const u = parseFloat($("#calcUnidades").value);
-  const p = parseFloat($("#calcPrecio").value);
-  const r = $("#calcResult");
-  if (Number.isFinite(u) && Number.isFinite(p) && u > 0 && p > 0) {
-    r.textContent = fmtE(u * p);
-    r.classList.add("ready");
-  } else {
-    r.textContent = "—";
-    r.classList.remove("ready");
-  }
 }
 
 function recalcMETotal() {
@@ -3601,10 +3929,10 @@ function openProdModal(prod = null) {
   $("#mpUnidades").value      = prod?.unidades      ?? "";
   $("#mpPrecioManual").value  = prod?.precioManual  ?? "";
   $("#mpCoingeckoId").value   = prod?.coingeckoId   || "";
-  $("#mpTDTicker").value      = prod?.twelveDataTicker || "";
+  $("#mpEtfTicker").value     = prod?.etfTicker || "";
   $("#mpAsignacion").value    = prod?.asignacionObjetivo ?? "";
   $("#mpCoinGeckoStatus").textContent = "";
-  $("#mpTDStatus").textContent        = "";
+  $("#mpEtfStatus").textContent       = "";
   $("#mpTipologiaList").innerHTML = TIPOLOGIAS.map(t => `<option value="${esc(t)}"></option>`).join("");
   $("#mpDivisaList").innerHTML    = DIVISAS.map(d => `<option value="${esc(d)}"></option>`).join("");
   state.productoColor       = prod?.color || COLORES[0];
@@ -3613,7 +3941,7 @@ function openProdModal(prod = null) {
   renderColorPicker();
   refreshProdSaveBtn();
   if (prod?.coingeckoId) verifyCoinGeckoId(prod.coingeckoId);
-  if (prod?.twelveDataTicker) verifyTwelveDataTicker(prod.twelveDataTicker);
+  if (prod?.etfTicker)    verifyEtfTicker(prod.etfTicker);
   $("#modalProd").classList.add("open");
   closeDrawer();
 }
@@ -3634,24 +3962,28 @@ async function verifyCoinGeckoId(id) {
   }
 }
 
-async function verifyTwelveDataTicker(ticker) {
-  const el = $("#mpTDStatus");
+async function verifyEtfTicker(ticker) {
+  const el = $("#mpEtfStatus");
   if (!el) return;
   if (!ticker) { el.textContent = ""; el.className = "field-hint"; return; }
-  if (!(state.twelveDataApiKey || "").trim()) {
+  const isYahoo = state.etfProvider === "yahoo";
+  const providerName = isYahoo ? "Yahoo Finance" : "Twelve Data";
+  if (!isYahoo && !(state.twelveDataApiKey || "").trim()) {
     el.textContent = "⚠ Configura primero tu API key en Configuración";
     el.className = "field-hint err";
     return;
   }
   el.textContent = "Verificando…";
   el.className = "field-hint";
-  const res = await fetchTwelveDataPrice(ticker);
+  const res = isYahoo
+    ? await fetchYahooPrice(ticker)
+    : await fetchTwelveDataPrice(ticker);
   if (res && Number.isFinite(res.eur)) {
-    el.textContent = `✓ ${fmtE(res.eur)} · Twelve Data`;
+    el.textContent = `✓ ${fmtE(res.eur)} · ${providerName}`;
     el.className = "field-hint ok";
   } else {
-    const cached = twelveDataCache[ticker];
-    const msg = cached?.error || "Ticker desconocido en Twelve Data";
+    const cached = isYahoo ? yahooCache[ticker] : twelveDataCache[ticker];
+    const msg = cached?.error || `Ticker desconocido en ${providerName}`;
     el.textContent = `✗ ${msg}`;
     el.className = "field-hint err";
   }
@@ -3689,7 +4021,7 @@ function saveProd() {
   const unidades     = numOrZero("#mpUnidades");
   const precioManual = numOrZero("#mpPrecioManual");
   const coingeckoId  = $("#mpCoingeckoId").value.trim().toLowerCase();
-  const twelveDataTicker = $("#mpTDTicker").value.trim().toUpperCase();
+  const etfTicker    = $("#mpEtfTicker").value.trim().toUpperCase();
   const asignRaw     = parseFloat($("#mpAsignacion").value);
   const asignacion   = Number.isFinite(asignRaw) ? Math.max(0, Math.min(100, asignRaw)) : 0;
   if (state.editProdId) {
@@ -3704,7 +4036,7 @@ function saveProd() {
       prod.unidades           = unidades;
       prod.precioManual       = precioManual;
       prod.coingeckoId        = coingeckoId;
-      prod.twelveDataTicker   = twelveDataTicker;
+      prod.etfTicker          = etfTicker;
       prod.asignacionObjetivo = asignacion;
     }
   } else {
@@ -3712,7 +4044,7 @@ function saveProd() {
     state.productos.push({
       id, nombre, referencia, tipologia, divisa, comentarios,
       color: state.productoColor,
-      unidades, precioManual, coingeckoId, twelveDataTicker,
+      unidades, precioManual, coingeckoId, etfTicker,
       asignacionObjetivo: asignacion,
     });
     state.entradas[id] = [];
@@ -3720,7 +4052,7 @@ function saveProd() {
   }
   state.editProdId = null;
   if (coingeckoId) fetchCoinGeckoPrice(coingeckoId);
-  if (twelveDataTicker) fetchTwelveDataPrice(twelveDataTicker);
+  if (etfTicker)   (state.etfProvider === "yahoo" ? fetchYahooPrice : fetchTwelveDataPrice)(etfTicker);
   saveState();
   $("#modalProd").classList.remove("open");
   render();
@@ -3911,6 +4243,7 @@ async function enableEncryption() {
     await writeField("objetivos", state.objetivos);
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
+    await writeField("etfProvider", state.etfProvider || "twelvedata");
     $("#modalSeguridad").classList.remove("open");
     flash();
     alert("✓ Cifrado activado. La próxima vez que abras la app se te pedirá la passphrase.");
@@ -3932,6 +4265,7 @@ async function disableEncryption() {
     await dbPut(DB_KV, state.objetivos, "objetivos");
     await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla }, "firePrefs");
     await dbPut(DB_KV, state.twelveDataApiKey || "", "twelveDataApiKey");
+    await dbPut(DB_KV, state.etfProvider || "twelvedata", "etfProvider");
     $("#modalSeguridad").classList.remove("open");
     flash();
     alert("✓ Cifrado desactivado.");
@@ -3969,6 +4303,7 @@ async function changePassphrase() {
     await writeField("objetivos", state.objetivos);
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
+    await writeField("etfProvider", state.etfProvider || "twelvedata");
     $("#modalSeguridad").classList.remove("open");
     flash();
     alert("✓ Passphrase cambiada.");
@@ -4140,6 +4475,8 @@ function bindCommon() {
     render();
     flash();
   });
+  const btnCalc = $("#btnCalcProd");
+  if (btnCalc) btnCalc.onclick = () => openCalcModal(state.tab);
   const btnEdit = $("#btnEditProd");
   if (btnEdit) btnEdit.onclick = () => {
     const prod = state.productos.find(p => p.id === state.tab);
@@ -4210,18 +4547,11 @@ function bindGlobals() {
   $("#objMeta").oninput   = refreshObjSaveBtn;
   ["meManual","meSaveback","meRoundup"].forEach(id => $("#" + id).oninput = recalcMETotal);
 
-  // Calculadora de unidades × precio en modal entrada
-  ["calcUnidades","calcPrecio"].forEach(id => {
+  // Calculadora standalone (modal independiente accesible desde el title-row)
+  ["mcUnidades","mcPrecio"].forEach(id => {
     const el = $("#" + id);
-    if (el) el.oninput = recalcCalcResult;
+    if (el) el.oninput = recalcMcResult;
   });
-  if ($("#calcApply")) $("#calcApply").onclick = () => {
-    const u = parseFloat($("#calcUnidades").value);
-    const p = parseFloat($("#calcPrecio").value);
-    if (Number.isFinite(u) && Number.isFinite(p) && u > 0 && p > 0) {
-      $("#meValor").value = (u * p).toFixed(2);
-    }
-  };
 
   // Validación CoinGecko ID al perder foco / pulsar Enter
   if ($("#mpCoingeckoId")) {
@@ -4234,15 +4564,15 @@ function bindGlobals() {
       coinTimer = setTimeout(() => verifyCoinGeckoId(v), 600);
     };
   }
-  // Validación Twelve Data ticker (mismo patrón)
-  if ($("#mpTDTicker")) {
-    let tdTimer = null;
-    $("#mpTDTicker").oninput = () => {
-      clearTimeout(tdTimer);
-      const v = $("#mpTDTicker").value.trim().toUpperCase();
-      $("#mpTDStatus").textContent = v ? "…" : "";
-      $("#mpTDStatus").className = "field-hint";
-      tdTimer = setTimeout(() => verifyTwelveDataTicker(v), 600);
+  // Validación ETF ticker (provider activo · Yahoo o Twelve Data)
+  if ($("#mpEtfTicker")) {
+    let etfTimer = null;
+    $("#mpEtfTicker").oninput = () => {
+      clearTimeout(etfTimer);
+      const v = $("#mpEtfTicker").value.trim().toUpperCase();
+      $("#mpEtfStatus").textContent = v ? "…" : "";
+      $("#mpEtfStatus").className = "field-hint";
+      etfTimer = setTimeout(() => verifyEtfTicker(v), 600);
     };
   }
 
@@ -4264,21 +4594,72 @@ function bindGlobals() {
   document.addEventListener("keydown", handleShortcut);
 }
 
+function openCalcModal(prodId) {
+  const prod = state.productos.find(p => p.id === prodId);
+  if (!prod) return;
+  $("#mcTitle").textContent = `CALCULADORA · ${prod.nombre.toUpperCase()}`;
+  $("#mcTitle").style.color = prod.color || "var(--accent)";
+  const price = getProductPriceSync(prod);
+  $("#mcUnidades").value = (Number.isFinite(+prod.unidades) && +prod.unidades > 0) ? +prod.unidades : "";
+  $("#mcPrecio").value   = price ? price.eur : "";
+  if (price) {
+    const fuente = price.source === "manual"
+      ? "Precio manual del producto"
+      : price.source === "coingecko"  ? `CoinGecko · ${priceAgeLabel(price.ts)}`
+      : price.source === "yahoo"      ? `Yahoo Finance · ${priceAgeLabel(price.ts)}`
+                                      : `Twelve Data · ${priceAgeLabel(price.ts)}`;
+    $("#mcSource").textContent = fuente;
+    $("#mcSub").textContent    = `Precio actual · ${fuente}`;
+  } else {
+    $("#mcSource").textContent = "Sin precio en caché — introduce manualmente";
+    $("#mcSub").textContent    = "";
+  }
+  recalcMcResult();
+  $("#modalCalc").classList.add("open");
+}
+
+function recalcMcResult() {
+  const u = parseFloat($("#mcUnidades").value);
+  const p = parseFloat($("#mcPrecio").value);
+  const r = $("#mcResult");
+  if (Number.isFinite(u) && Number.isFinite(p) && u > 0 && p > 0) {
+    r.textContent = fmtE(u * p);
+    r.classList.add("ready");
+  } else {
+    r.textContent = "—";
+    r.classList.remove("ready");
+  }
+}
+
 function openConfigModal() {
   $("#cfgTwelveDataKey").value = state.twelveDataApiKey || "";
+  const provider = state.etfProvider || "twelvedata";
+  $$('input[name="cfgProvider"]').forEach(r => { r.checked = r.value === provider; });
+  toggleConfigKeyField(provider);
+  $$('input[name="cfgProvider"]').forEach(r => {
+    r.onchange = () => toggleConfigKeyField(r.value);
+  });
   $("#modalConfig").classList.add("open");
   closeDrawer();
 }
 
+function toggleConfigKeyField(provider) {
+  $("#cfgTDKeyField").style.display = provider === "twelvedata" ? "" : "none";
+}
+
 function saveConfig() {
+  const newProvider = $('input[name="cfgProvider"]:checked')?.value || "twelvedata";
   const key = $("#cfgTwelveDataKey").value.trim();
+  const providerChanged = state.etfProvider !== newProvider;
+  state.etfProvider     = newProvider;
   state.twelveDataApiKey = key;
-  // Si la key cambia, invalidamos la caché (los precios viejos pueden ser inválidos)
+  // Invalidamos cachés (key cambió o cambió el proveedor → posibles datos viejos)
   Object.keys(twelveDataCache).forEach(k => delete twelveDataCache[k]);
+  Object.keys(yahooCache).forEach(k => delete yahooCache[k]);
   saveState();
   $("#modalConfig").classList.remove("open");
   flash();
-  // Refresca precios si hay productos con ticker configurado
+  if (providerChanged) render();    // refresca badges/cabeceras
   refreshAllPricesAsync();
 }
 

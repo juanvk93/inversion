@@ -35,13 +35,17 @@
     <div class="actions">
       <span class="saved" id="saved" style="display:none">✓ guardado</span>
       <span class="save-error" id="saveError" style="display:none" title="">⚠ error al guardar</span>
-      <button class="btn-theme" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema">☀</button>
       <button class="btn-primary" id="btnAddEntry" style="display:none">+ ENTRADA</button>
     </div>
   </header>
 
   <main id="main"></main>
 </div>
+
+<!-- FAB: botón flotante de nueva entrada (solo móvil, en tabs de producto) -->
+<button class="fab-entry" id="fabAddEntry" aria-label="Nueva entrada" title="Nueva entrada">
+  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+</button>
 
 <!-- Drawer lateral -->
 <div class="drawer-overlay" id="drawerOverlay"></div>
@@ -156,27 +160,8 @@
         <div class="di-sub">Informe completo de la vista actual</div>
       </div>
     </button>
-    <button class="drawer-item" id="btnSeguridad">
-      <span class="di-icon">⚿</span>
-      <div class="di-body">
-        <div class="di-title">SEGURIDAD</div>
-        <div class="di-sub">Cifrar datos con passphrase</div>
-      </div>
-    </button>
     <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none">
     <input type="file" id="fileImportJSON" accept=".json,application/json" style="display:none">
-  </div>
-
-  <div class="drawer-section">
-    <div class="drawer-section-title">PUNTOS DE RESTAURACIÓN</div>
-    <button class="drawer-item" id="btnSnapshot">
-      <span class="di-icon">⦿</span>
-      <div class="di-body">
-        <div class="di-title">CREAR PUNTO</div>
-        <div class="di-sub" id="snapSub">Sin guardado reciente</div>
-      </div>
-    </button>
-    <div class="snap-list" id="snapList"></div>
   </div>
 
   <div class="drawer-section">
@@ -253,16 +238,6 @@
   </div>
 </div>
 
-<!-- Modal seguridad -->
-<div class="modal-bg" id="modalSeguridad">
-  <div class="modal modal-small">
-    <div class="modal-head">
-      <h2>SEGURIDAD</h2>
-      <button class="modal-close" data-close="modalSeguridad">✕</button>
-    </div>
-    <div id="seg-body"></div>
-  </div>
-</div>
 
 <!-- Modal calculadora -->
 <div class="modal-bg" id="modalCalc">
@@ -289,48 +264,6 @@
       </div>
     </div>
     <div class="field-hint" id="mcSource" style="text-align:center;margin-top:10px"></div>
-  </div>
-</div>
-
-<!-- Modal configuración -->
-<div class="modal-bg" id="modalConfig">
-  <div class="modal modal-small">
-    <div class="modal-head">
-      <h2>CONFIGURACIÓN</h2>
-      <button class="modal-close" data-close="modalConfig">✕</button>
-    </div>
-
-    <div class="field">
-      <label>PROVEEDOR DE PRECIOS ETF</label>
-      <div class="cfg-card-group">
-        <label class="cfg-card">
-          <input type="radio" name="cfgProvider" value="twelvedata">
-          <span class="cfg-card-check" aria-hidden="true">✓</span>
-          <span class="cfg-card-body">
-            <strong>Twelve Data</strong>
-            <small>Requiere API key · formato MIC (ej. IWDA.XAMS)</small>
-          </span>
-        </label>
-        <label class="cfg-card">
-          <input type="radio" name="cfgProvider" value="yahoo">
-          <span class="cfg-card-check" aria-hidden="true">✓</span>
-          <span class="cfg-card-body">
-            <strong>Yahoo Finance</strong>
-            <small>Sin clave · vía proxy CORS · formato suffix (ej. IWDA.AS)</small>
-          </span>
-        </label>
-      </div>
-    </div>
-
-    <div class="field" id="cfgTDKeyField">
-      <label>TWELVE DATA API KEY <span class="lbl-hint">(solo si usas Twelve Data)</span></label>
-      <input type="text" id="cfgTwelveDataKey" placeholder="Tu API key de twelvedata.com..." autocomplete="off" spellcheck="false">
-      <div class="field-hint">
-        Regístrate gratis en <strong>twelvedata.com</strong> · 800 peticiones/día sin coste. La key se guarda solo en este dispositivo (IndexedDB).
-      </div>
-    </div>
-
-    <button class="save-btn" id="cfgSave" style="margin-top:24px">GUARDAR</button>
   </div>
 </div>
 
@@ -535,8 +468,8 @@
         <input type="number" step="any" min="0" id="mpPrecioManual" placeholder="0,00">
       </div>
     </div>
-    <div class="field">
-      <label>COINGECKO ID <span class="lbl-hint">(solo cripto, opcional)</span></label>
+    <div class="field" id="mpCoinGeckoField">
+      <label>COINGECKO ID <span class="lbl-hint">(criptomoneda, opcional)</span></label>
       <input type="text" id="mpCoingeckoId" list="mpCoingeckoList" placeholder="bitcoin, ethereum, cardano, solana...">
       <datalist id="mpCoingeckoList">
         <option value="bitcoin"></option>
@@ -555,7 +488,7 @@
       </datalist>
       <div class="field-hint" id="mpCoinGeckoStatus"></div>
     </div>
-    <div class="field">
+    <div class="field" id="mpEtfField">
       <label>ETF TICKER <span class="lbl-hint" id="mpEtfHint">(formato según provider configurado, opcional)</span></label>
       <input type="text" id="mpEtfTicker" placeholder="IWDA.AS (Yahoo) o IWDA.XAMS (Twelve Data)...">
       <div class="field-hint" id="mpEtfStatus"></div>

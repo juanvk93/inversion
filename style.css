@@ -133,6 +133,24 @@ header {
   font-family: 'Bebas Neue', sans-serif; font-size: 12px; letter-spacing: 1px;
   cursor: pointer; white-space: nowrap;
 }
+/* FAB · botón flotante de nueva entrada (solo móvil) */
+.fab-entry {
+  display: none;   /* visible solo en móvil vía media query */
+  position: fixed;
+  right: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  width: 56px; height: 56px;
+  border: none; border-radius: 50%;
+  color: #fff;
+  align-items: center; justify-content: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  cursor: pointer;
+  z-index: 35;
+  transition: transform .12s ease, box-shadow .15s;
+}
+.fab-entry:active { transform: scale(0.92); }
+.fab-entry svg { display: block; }
+
 .btn-hamburger {
   background: transparent; border: 1px solid rgba(255,255,255,0.08);
   border-radius: 8px;
@@ -372,9 +390,7 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
 .btn-icon-edit:hover {
   color: var(--text); border-color: var(--mute);
 }
-.btn-icon-calc {
-  font-size: 16px;
-}
+.btn-icon-calc svg { display: block; }
 .btn-icon-calc:hover {
   color: var(--accent); border-color: var(--accent);
 }
@@ -881,7 +897,11 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   }
   .saved { display: none !important; } /* el toast confirma en móvil */
 
-  main { padding: 18px 14px; }
+  /* En móvil usamos el FAB flotante; ocultamos el "+ ENTRADA" del header */
+  #btnAddEntry { display: none !important; }
+  .fab-entry.fab-active { display: flex; }
+
+  main { padding: 18px 14px; padding-bottom: 90px; } /* hueco para el FAB */
 
   .title-row h2 { font-size: 26px; }
 
@@ -1545,6 +1565,13 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIGURACIÓN · selector de proveedor (cards con check)
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Fila simple etiqueta + control (apariencia/tema) */
+.cfg-line {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.cfg-line-label { font-family: monospace; font-size: 12px; color: var(--mute); letter-spacing: 0.5px; }
 
 .cfg-card-group {
   display: flex; flex-direction: column; gap: 8px;

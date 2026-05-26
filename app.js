@@ -894,13 +894,15 @@ function tipoMedioEfectivo(ganancia) {
 }
 
 // Devuelve la fecha de corte (YYYY-MM) para un periodo dado tomando como
-// referencia `ultFecha`. Devuelve null si el periodo es "all" o no aplica.
+// referencia `ultFecha`. periodo: "all"|"3m"|"6m"|"9m"|"ytd"|"1y"|"2y"|"3y"|"5y".
+// Devuelve null si el periodo es "all" o no aplica.
 function calcCutoff(ultFecha, periodo) {
   if (!ultFecha || periodo === "all" || !periodo) return null;
   const [uy, um] = ultFecha.split("-").map(Number);
   let cy = uy, cm = um;
   if      (periodo === "3m") cm -= 2;   // últimos 3 meses incluyendo el actual
   else if (periodo === "6m") cm -= 5;
+  else if (periodo === "9m") cm -= 8;
   else if (periodo === "1y") cm -= 11;
   else if (periodo === "2y") cm -= 23;
   else if (periodo === "3y") cm -= 35;
@@ -922,7 +924,13 @@ function filtrarFilas(filas, periodo) {
 // 5. CSV
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CSV_HEADERS = ["producto_id","producto_nombre","fecha","manual","saveback","roundup","valor","nota"];
+const CSV_HEADERS = [
+  "producto_id","producto_nombre","fecha","manual","saveback","roundup","valor","nota",
+  // Metadatos de producto (se repiten en cada fila del producto; en import basta la 1ª)
+  "producto_referencia","producto_tipologia","producto_divisa","producto_color",
+  "producto_unidades","producto_precio_manual","producto_coingecko","producto_etf_ticker",
+  "producto_asignacion",
+];
 
 function escCSV(v) {
   if (v == null) return "";
@@ -956,13 +964,25 @@ function parseCSVLine(linea) {
 function generarCSV() {
   const lineas = [CSV_HEADERS.join(",")];
   state.productos.forEach(p => {
-    (state.entradas[p.id] || []).forEach(e => {
-      lineas.push([
-        escCSV(p.id), escCSV(p.nombre), escCSV(e.fecha),
-        e.manual || 0, e.saveback || 0, e.roundup || 0,
-        e.valor || 0, escCSV(e.nota || ""),
-      ].join(","));
-    });
+    const meta = [
+      escCSV(p.referencia || ""), escCSV(p.tipologia || ""), escCSV(p.divisa || ""),
+      escCSV(p.color || ""), p.unidades || 0, p.precioManual || 0,
+      escCSV(p.coingeckoId || ""), escCSV(p.etfTicker || ""), p.asignacionObjetivo || 0,
+    ];
+    const lista = state.entradas[p.id] || [];
+    if (lista.length) {
+      lista.forEach(e => {
+        lineas.push([
+          escCSV(p.id), escCSV(p.nombre), escCSV(e.fecha),
+          e.manual || 0, e.saveback || 0, e.roundup || 0,
+          e.valor || 0, escCSV(e.nota || ""),
+          ...meta,
+        ].join(","));
+      });
+    } else {
+      // Producto sin entradas: una fila con metadatos para no perderlo en el export
+      lineas.push([escCSV(p.id), escCSV(p.nombre), "", 0, 0, 0, 0, "", ...meta].join(","));
+    }
   });
   return lineas.join("\n");
 }
@@ -993,6 +1013,13 @@ function importarCSV(texto) {
   const iPid = idx("producto_id"), iPnom = idx("producto_nombre"), iF = idx("fecha"),
         iM   = idx("manual"),      iS    = idx("saveback"),        iR = idx("roundup"),
         iV   = idx("valor"),       iN    = idx("nota"),            iA = idx("aportacion");
+  // Columnas de metadatos de producto (opcionales)
+  const iRef  = idx("producto_referencia"), iTip = idx("producto_tipologia"),
+        iDiv  = idx("producto_divisa"),      iCol = idx("producto_color"),
+        iUni  = idx("producto_unidades"),    iPrM = idx("producto_precio_manual"),
+        iCg   = idx("producto_coingecko"),   iEtf = idx("producto_etf_ticker"),
+        iAsg  = idx("producto_asignacion");
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
 
   const prodMap = {};
   const ents = {};
@@ -1003,9 +1030,24 @@ function importarCSV(texto) {
     const pid    = sanitizeId(rawPid);   // bloquea caracteres peligrosos en IDs
     const pnom   = (c[iPnom] || pid).trim();
     if (!prodMap[pid]) {
-      prodMap[pid] = { id: pid, nombre: pnom, referencia: "", color: COLORES[Object.keys(prodMap).length % COLORES.length] };
+      // Reconstruir producto con metadatos (primera fila que lo menciona)
+      const colorVal = iCol >= 0 && /^#[0-9a-fA-F]{6}$/.test((c[iCol]||"").trim()) ? c[iCol].trim() : COLORES[Object.keys(prodMap).length % COLORES.length];
+      prodMap[pid] = {
+        id: pid, nombre: pnom,
+        referencia:         iRef >= 0 ? (c[iRef] || "").trim() : "",
+        tipologia:          iTip >= 0 ? (c[iTip] || "").trim() : "",
+        divisa:             iDiv >= 0 ? (c[iDiv] || "").trim().toUpperCase() : "",
+        color:              colorVal,
+        unidades:           iUni >= 0 ? num(c[iUni]) : 0,
+        precioManual:       iPrM >= 0 ? num(c[iPrM]) : 0,
+        coingeckoId:        iCg  >= 0 ? (c[iCg]  || "").trim().toLowerCase() : "",
+        etfTicker:          iEtf >= 0 ? (c[iEtf] || "").trim().toUpperCase() : "",
+        asignacionObjetivo: iAsg >= 0 ? Math.max(0, Math.min(100, num(c[iAsg]))) : 0,
+      };
       ents[pid] = [];
     }
+    // Filas sin fecha válida solo aportan metadatos del producto (no entrada)
+    if (!(c[iF] || "").trim()) continue;
     let manual = 0, saveback = 0, roundup = 0;
     if (iM >= 0) manual   = parseFloat(c[iM]) || 0;
     if (iS >= 0) saveback = parseFloat(c[iS]) || 0;
@@ -1113,6 +1155,11 @@ function generarJSON() {
     firePrefs: {
       gasto: state.fireGasto,
       regla: state.fireRegla,
+    },
+    config: {
+      etfProvider:      state.etfProvider || "twelvedata",
+      twelveDataApiKey: state.twelveDataApiKey || "",
+      theme:            document.documentElement.classList.contains("light") ? "light" : "dark",
     },
   };
   return JSON.stringify(payload, null, 2);
@@ -1222,7 +1269,17 @@ function importarJSON(texto) {
     };
   }
 
-  return { productos, entradas, objetivos, firePrefs, descartadas };
+  // Configuración (opcional)
+  let config = null;
+  if (raw.config && typeof raw.config === "object") {
+    config = {
+      etfProvider:      ETF_PROVIDERS.includes(raw.config.etfProvider) ? raw.config.etfProvider : null,
+      twelveDataApiKey: typeof raw.config.twelveDataApiKey === "string" ? raw.config.twelveDataApiKey : null,
+      theme:            raw.config.theme === "light" || raw.config.theme === "dark" ? raw.config.theme : null,
+    };
+  }
+
+  return { productos, entradas, objetivos, firePrefs, config, descartadas };
 }
 
 function handleImportJSON(file) {
@@ -1262,6 +1319,12 @@ function handleImportJSON(file) {
       });
       const objIds = new Set((state.objetivos || []).map(o => o.id));
       data.objetivos.forEach(o => { if (!objIds.has(o.id)) state.objetivos.push(o); });
+    }
+    // Configuración: se aplica en ambos modos (reemplazar y fusionar)
+    if (data.config) {
+      if (data.config.etfProvider)      state.etfProvider     = data.config.etfProvider;
+      if (data.config.twelveDataApiKey != null) state.twelveDataApiKey = data.config.twelveDataApiKey;
+      if (data.config.theme)            { localStorage.setItem("tema", data.config.theme); applyTheme(data.config.theme); }
     }
     saveState();
     render();
@@ -2069,6 +2132,7 @@ function getAccentColor() {
   if (state.tab === "asignacion") return "#22D3EE";
   if (state.tab === "diff")       return "#FB923C";
   if (state.tab === "fiscal")     return "#F87171";
+  if (state.tab === "config")     return "#94A3B8";
   if (state.tab === "total")      return "#FBBF24";
   return state.productos.find(p => p.id === state.tab)?.color || "#FBBF24";
 }
@@ -2211,11 +2275,21 @@ function render() {
   renderTabs();
 
   const btnAdd = $("#btnAddEntry");
-  const reservados = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal"]);
+  const reservados = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
   const esProd = !reservados.has(state.tab);
   btnAdd.style.display    = esProd ? "inline-block" : "none";
   btnAdd.style.background = accent;
   btnAdd.onclick          = () => openEntryModal();
+
+  // FAB flotante (móvil): mismo comportamiento, color del producto activo.
+  // La visibilidad real la decide el CSS (media query); aquí solo marcamos
+  // si aplica al tab actual mediante una clase, para no romper la media query.
+  const fab = $("#fabAddEntry");
+  if (fab) {
+    fab.classList.toggle("fab-active", esProd);
+    fab.style.background = accent;
+    fab.onclick          = () => openEntryModal();
+  }
 
   let result;
   if      (state.tab === "proyeccion") result = renderProyeccion();
@@ -2223,6 +2297,7 @@ function render() {
   else if (state.tab === "asignacion") result = renderAsignacion();
   else if (state.tab === "diff")       result = renderDiff();
   else if (state.tab === "fiscal")     result = renderFiscal();
+  else if (state.tab === "config")     result = renderConfig();
   else                                  result = renderTabActual();
   // Fetch async de precios CoinGecko + re-render si llega algo
   refreshAllPricesAsync();
@@ -2284,6 +2359,7 @@ function renderTabActual() {
     { id: "2y",  l: "2A"   },
     { id: "1y",  l: "1A"   },
     { id: "ytd", l: "YTD"  },
+    { id: "9m",  l: "9M"   },
     { id: "6m",  l: "6M"   },
     { id: "3m",  l: "3M"   },
   ];
@@ -2297,7 +2373,7 @@ function renderTabActual() {
         ${streak >= 2 ? `<div class="streak-badge">🔥 ${streak} MES${streak===1?"":"ES"} SEGUIDO${streak===1?"":"S"} APORTANDO</div>` : ""}
       </div>
       ${!esTotal ? `<div class="prod-acts">
-        <button class="btn-icon btn-icon-calc" id="btnCalcProd" title="Calculadora" aria-label="Abrir calculadora">⊞</button>
+        <button class="btn-icon btn-icon-calc" id="btnCalcProd" title="Calculadora" aria-label="Abrir calculadora"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="8" y2="10"/><line x1="12" y1="10" x2="12" y2="10"/><line x1="16" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="16" y1="14" x2="16" y2="18"/><line x1="8" y1="18" x2="12" y2="18"/></svg></button>
         <button class="btn-icon btn-icon-edit" id="btnEditProd" title="Editar producto" aria-label="Editar producto">✎</button>
         <button class="btn-icon btn-icon-del"  id="btnDelProd"  title="Eliminar producto" aria-label="Eliminar producto">✕</button>
       </div>` : ""}
@@ -2458,7 +2534,7 @@ function renderTabActual() {
     growthData = calcCrecimientoNormalizado(state.filtroPeriodo);
     if (growthData.datasets.length > 1 && growthData.labels.length >= 2) {
       html += `<div class="panel">
-        <div class="panel-title">CRECIMIENTO NORMALIZADO · BASE 100 = APORTADO<span class="kpi-info" tabindex="0" role="button" aria-label="Cómo se calcula este gráfico" data-tip="${esc(tipGrowth)}">i</span></div>
+        <div class="panel-title">CRECIMIENTO NORMALIZADO · BASE 100<span class="kpi-info" tabindex="0" role="button" aria-label="Cómo se calcula este gráfico" data-tip="${esc(tipGrowth)}">i</span></div>
         <div class="chart-box" style="height:280px"><canvas id="chartGrowth"></canvas></div>
       </div>`;
     } else {
@@ -3871,7 +3947,8 @@ function renderObjetivos(productoId, valorActual) {
 
 function openEntryModal(entry = null) {
   if (state.tab === "total" || state.tab === "proyeccion" || state.tab === "fire"
-      || state.tab === "asignacion" || state.tab === "diff" || state.tab === "fiscal") return;
+      || state.tab === "asignacion" || state.tab === "diff" || state.tab === "fiscal"
+      || state.tab === "config") return;
   state.editEntradaId = entry?.id || null;
   const prod   = state.productos.find(p => p.id === state.tab);
   const accent = getAccentColor();
@@ -3940,10 +4017,20 @@ function openProdModal(prod = null) {
   $("#mpSave").textContent  = prod ? "GUARDAR CAMBIOS" : "CREAR PRODUCTO";
   renderColorPicker();
   refreshProdSaveBtn();
+  toggleProdPriceField();   // muestra CoinGecko o ETF según tipología
   if (prod?.coingeckoId) verifyCoinGeckoId(prod.coingeckoId);
   if (prod?.etfTicker)    verifyEtfTicker(prod.etfTicker);
   $("#modalProd").classList.add("open");
   closeDrawer();
+}
+
+// Muestra el campo de precio relevante según la tipología:
+// criptomoneda → CoinGecko ID; cualquier otra (ETF, acción…) → ETF Ticker.
+function toggleProdPriceField() {
+  const tip = $("#mpTipologia").value.trim().toLowerCase();
+  const esCripto = /cripto|crypto|bitcoin|moneda/.test(tip);
+  $("#mpCoinGeckoField").style.display = esCripto ? "" : "none";
+  $("#mpEtfField").style.display       = esCripto ? "none" : "";
 }
 
 async function verifyCoinGeckoId(id) {
@@ -4181,53 +4268,6 @@ function openChangelog() {
 
 // ── Modal de SEGURIDAD (cifrado local) ───────────────────────────────────
 
-async function openSeguridadModal() {
-  const encMeta = await dbGet(DB_KV, "encMeta");
-  const enabled = !!encMeta?.enabled;
-  const body = $("#seg-body");
-  body.innerHTML = enabled ? `
-    <div class="seg-status seg-on">
-      <span class="seg-dot"></span> CIFRADO ACTIVO
-    </div>
-    <p class="seg-info">Tus datos están cifrados con AES-256. Necesitarás la passphrase cada vez que abras la app.</p>
-    <button class="save-btn" id="segChange">CAMBIAR PASSPHRASE</button>
-    <button class="seg-btn-danger" id="segDisable">DESACTIVAR CIFRADO</button>
-  ` : `
-    <div class="seg-status seg-off">
-      <span class="seg-dot"></span> SIN CIFRADO
-    </div>
-    <p class="seg-info">Activa el cifrado para proteger tus datos en este dispositivo. Tus datos solo serán accesibles introduciendo tu passphrase.</p>
-    <div class="seg-warn">
-      ⚠ Si olvidas la passphrase, <strong>no hay forma de recuperar los datos</strong>. Anótala en un sitio seguro antes de activar.
-    </div>
-    <div class="field">
-      <label>NUEVA PASSPHRASE (mín. 8 caracteres)</label>
-      <input type="password" id="segPass1" placeholder="••••••••" autocomplete="new-password">
-    </div>
-    <div class="field" style="margin-bottom:24px">
-      <label>CONFIRMAR PASSPHRASE</label>
-      <input type="password" id="segPass2" placeholder="••••••••" autocomplete="new-password">
-    </div>
-    <button class="save-btn" id="segEnable" disabled>ACTIVAR CIFRADO</button>
-  `;
-  closeDrawer();
-  $("#modalSeguridad").classList.add("open");
-
-  if (enabled) {
-    $("#segChange").onclick  = changePassphrase;
-    $("#segDisable").onclick = disableEncryption;
-  } else {
-    const refresh = () => {
-      const p1 = $("#segPass1").value;
-      const p2 = $("#segPass2").value;
-      $("#segEnable").disabled = !(p1.length >= 8 && p1 === p2);
-    };
-    $("#segPass1").oninput = refresh;
-    $("#segPass2").oninput = refresh;
-    $("#segEnable").onclick = enableEncryption;
-  }
-}
-
 async function enableEncryption() {
   const pass = $("#segPass1").value;
   if (pass.length < 8) return;
@@ -4244,7 +4284,7 @@ async function enableEncryption() {
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
-    $("#modalSeguridad").classList.remove("open");
+    renderSegBody();
     flash();
     alert("✓ Cifrado activado. La próxima vez que abras la app se te pedirá la passphrase.");
   } catch (err) {
@@ -4266,7 +4306,7 @@ async function disableEncryption() {
     await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla }, "firePrefs");
     await dbPut(DB_KV, state.twelveDataApiKey || "", "twelveDataApiKey");
     await dbPut(DB_KV, state.etfProvider || "twelvedata", "etfProvider");
-    $("#modalSeguridad").classList.remove("open");
+    renderSegBody();
     flash();
     alert("✓ Cifrado desactivado.");
   } catch (err) {
@@ -4304,7 +4344,7 @@ async function changePassphrase() {
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
-    $("#modalSeguridad").classList.remove("open");
+    renderSegBody();
     flash();
     alert("✓ Passphrase cambiada.");
   } catch (err) {
@@ -4342,8 +4382,6 @@ async function promptUnlock(encMeta) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function openDrawer() {
-  updateSnapSub();
-  renderSnapshots();
   $("#drawer").classList.add("open");
   $("#drawerOverlay").classList.add("open");
 }
@@ -4390,7 +4428,7 @@ function handleShortcut(e) {
 
   const k = e.key.toLowerCase();
 
-  const _reservadosShortcut = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal"]);
+  const _reservadosShortcut = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
   switch (k) {
     case "n":
       if (!_reservadosShortcut.has(state.tab)) {
@@ -4525,7 +4563,6 @@ function bindGlobals() {
     if (f) handleImportJSON(f);
     e.target.value = "";
   };
-  $("#btnSnapshot").onclick      = crearSnapshot;
   $("#btnProyeccion").onclick    = () => { state.tab = "proyeccion"; closeDrawer(); render(); };
   $("#btnObjetivos").onclick     = openObjetivosModal;
   $("#btnFire").onclick          = () => { state.tab = "fire"; closeDrawer(); render(); };
@@ -4553,6 +4590,12 @@ function bindGlobals() {
     if (el) el.oninput = recalcMcResult;
   });
 
+  // Tipología cambia → alternar campo CoinGecko / ETF Ticker
+  if ($("#mpTipologia")) {
+    $("#mpTipologia").addEventListener("input", toggleProdPriceField);
+    $("#mpTipologia").addEventListener("change", toggleProdPriceField);
+  }
+
   // Validación CoinGecko ID al perder foco / pulsar Enter
   if ($("#mpCoingeckoId")) {
     let coinTimer = null;
@@ -4579,16 +4622,11 @@ function bindGlobals() {
   $$('[data-close]').forEach(b => b.onclick = () => $("#" + b.dataset.close).classList.remove("open"));
   $$('.modal-bg').forEach(bg => bg.onclick = (e) => { if (e.target === bg) bg.classList.remove("open"); });
 
-  // Tema
-  $("#btnTheme").onclick = toggleTheme;
-
   // PDF export (lazy-load de libs)
   $("#btnPDF").onclick = exportarPDF;
-  $("#btnSeguridad").onclick = openSeguridadModal;
 
-  // Configuración (API keys)
-  $("#btnConfig").onclick = openConfigModal;
-  $("#cfgSave").onclick   = saveConfig;
+  // Configuración (página · tema, proveedor, seguridad, snapshots)
+  $("#btnConfig").onclick = () => { state.tab = "config"; closeDrawer(); render(); };
 
   // Atajos
   document.addEventListener("keydown", handleShortcut);
@@ -4631,36 +4669,161 @@ function recalcMcResult() {
   }
 }
 
-function openConfigModal() {
-  $("#cfgTwelveDataKey").value = state.twelveDataApiKey || "";
+// ═══════════════════════════════════════════════════════════════════════════
+// 7e. VISTA · CONFIGURACIÓN (página)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderConfig() {
+  const accent   = "#94A3B8";
+  const isLight  = document.documentElement.classList.contains("light");
   const provider = state.etfProvider || "twelvedata";
-  $$('input[name="cfgProvider"]').forEach(r => { r.checked = r.value === provider; });
+
+  const html = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">CONFIGURACIÓN</h2>
+        <div class="subtitle">Apariencia, proveedores de datos, seguridad y copias</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">APARIENCIA</div>
+      <div class="cfg-line">
+        <span class="cfg-line-label">Tema de la interfaz</span>
+        <div class="toggle">
+          <button class="${!isLight ? "active" : ""}" data-theme="dark">OSCURO</button>
+          <button class="${isLight ? "active" : ""}" data-theme="light">CLARO</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">PROVEEDOR DE PRECIOS ETF</div>
+      <div class="cfg-card-group">
+        <label class="cfg-card">
+          <input type="radio" name="cfgProvider" value="twelvedata" ${provider === "twelvedata" ? "checked" : ""}>
+          <span class="cfg-card-check" aria-hidden="true">✓</span>
+          <span class="cfg-card-body">
+            <strong>Twelve Data</strong>
+            <small>Requiere API key · formato MIC (ej. IWDA.XAMS)</small>
+          </span>
+        </label>
+        <div class="field" id="cfgTDKeyField">
+          <label>TWELVE DATA API KEY</label>
+          <input type="text" id="cfgTwelveDataKey" placeholder="Tu API key de twelvedata.com..." autocomplete="off" spellcheck="false" value="${esc(state.twelveDataApiKey || "")}">
+          <div class="field-hint">Registro gratis en <strong>twelvedata.com</strong> · 800 peticiones/día. La key se guarda solo en este dispositivo.</div>
+        </div>
+        <label class="cfg-card">
+          <input type="radio" name="cfgProvider" value="yahoo" ${provider === "yahoo" ? "checked" : ""}>
+          <span class="cfg-card-check" aria-hidden="true">✓</span>
+          <span class="cfg-card-body">
+            <strong>Yahoo Finance</strong>
+            <small>Sin clave · vía proxy CORS · formato suffix (ej. IWDA.AS)</small>
+          </span>
+        </label>
+      </div>
+      <button class="save-btn" id="cfgSave" style="margin-top:16px">GUARDAR PROVEEDOR</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">SEGURIDAD</div>
+      <div id="seg-body"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">PUNTOS DE RESTAURACIÓN</div>
+      <button class="drawer-item" id="btnSnapshot" style="width:100%">
+        <span class="di-icon">⦿</span>
+        <div class="di-body">
+          <div class="di-title">CREAR PUNTO</div>
+          <div class="di-sub" id="snapSub">Sin guardado reciente</div>
+        </div>
+      </button>
+      <div class="snap-list" id="snapList" style="margin-top:8px"></div>
+    </div>
+  `;
+  $("#main").innerHTML = html;
+
+  // Apariencia
+  $$('[data-theme]').forEach(b => b.onclick = () => {
+    const tema = b.dataset.theme;
+    localStorage.setItem("tema", tema);
+    applyTheme(tema);
+    render();
+  });
+
+  // Proveedor de precios
   toggleConfigKeyField(provider);
   $$('input[name="cfgProvider"]').forEach(r => {
     r.onchange = () => toggleConfigKeyField(r.value);
   });
-  $("#modalConfig").classList.add("open");
-  closeDrawer();
+  $("#cfgSave").onclick = saveConfig;
+
+  // Seguridad (cifrado)
+  renderSegBody();
+
+  // Snapshots
+  $("#btnSnapshot").onclick = crearSnapshot;
+  updateSnapSub();
+  renderSnapshots();
 }
 
 function toggleConfigKeyField(provider) {
-  $("#cfgTDKeyField").style.display = provider === "twelvedata" ? "" : "none";
+  const f = $("#cfgTDKeyField");
+  if (f) f.style.display = provider === "twelvedata" ? "" : "none";
 }
 
 function saveConfig() {
   const newProvider = $('input[name="cfgProvider"]:checked')?.value || "twelvedata";
   const key = $("#cfgTwelveDataKey").value.trim();
-  const providerChanged = state.etfProvider !== newProvider;
-  state.etfProvider     = newProvider;
+  state.etfProvider      = newProvider;
   state.twelveDataApiKey = key;
   // Invalidamos cachés (key cambió o cambió el proveedor → posibles datos viejos)
   Object.keys(twelveDataCache).forEach(k => delete twelveDataCache[k]);
   Object.keys(yahooCache).forEach(k => delete yahooCache[k]);
   saveState();
-  $("#modalConfig").classList.remove("open");
   flash();
-  if (providerChanged) render();    // refresca badges/cabeceras
   refreshAllPricesAsync();
+}
+
+// Renderiza el bloque de seguridad/cifrado dentro de #seg-body (en la página config).
+async function renderSegBody() {
+  const body = $("#seg-body");
+  if (!body) return;
+  const encMeta = await dbGet(DB_KV, "encMeta");
+  const enabled = !!encMeta?.enabled;
+  body.innerHTML = enabled ? `
+    <div class="seg-status seg-on"><span class="seg-dot"></span> CIFRADO ACTIVO</div>
+    <p class="seg-info">Tus datos están cifrados con AES-256. Necesitarás la passphrase cada vez que abras la app.</p>
+    <button class="save-btn" id="segChange">CAMBIAR PASSPHRASE</button>
+    <button class="seg-btn-danger" id="segDisable">DESACTIVAR CIFRADO</button>
+  ` : `
+    <div class="seg-status seg-off"><span class="seg-dot"></span> SIN CIFRADO</div>
+    <p class="seg-info">Activa el cifrado para proteger tus datos en este dispositivo. Solo serán accesibles introduciendo tu passphrase.</p>
+    <div class="seg-warn">⚠ Si olvidas la passphrase, <strong>no hay forma de recuperar los datos</strong>. Anótala en un sitio seguro antes de activar.</div>
+    <div class="field">
+      <label>NUEVA PASSPHRASE (mín. 8 caracteres)</label>
+      <input type="password" id="segPass1" placeholder="••••••••" autocomplete="new-password">
+    </div>
+    <div class="field" style="margin-bottom:24px">
+      <label>CONFIRMAR PASSPHRASE</label>
+      <input type="password" id="segPass2" placeholder="••••••••" autocomplete="new-password">
+    </div>
+    <button class="save-btn" id="segEnable" disabled>ACTIVAR CIFRADO</button>
+  `;
+  if (enabled) {
+    $("#segChange").onclick  = changePassphrase;
+    $("#segDisable").onclick = disableEncryption;
+  } else {
+    const refresh = () => {
+      const p1 = $("#segPass1").value;
+      const p2 = $("#segPass2").value;
+      $("#segEnable").disabled = !(p1.length >= 8 && p1 === p2);
+    };
+    $("#segPass1").oninput = refresh;
+    $("#segPass2").oninput = refresh;
+    $("#segEnable").onclick = enableEncryption;
+  }
 }
 
 // ── Tema claro/oscuro ─────────────────────────────────────────────────────
@@ -4668,8 +4831,6 @@ function applyTheme(tema) {
   const root = document.documentElement;
   if (tema === "light") root.classList.add("light");
   else                  root.classList.remove("light");
-  const btn = $("#btnTheme");
-  if (btn) btn.textContent = tema === "light" ? "☾" : "☀";
   // Chart.js: actualizar colores de ejes/tooltip
   const isLight = tema === "light";
   Chart.defaults.color       = isLight ? "#6B7280" : "#374151";
@@ -4749,9 +4910,7 @@ async function exportarPDF() {
   await loadState();
   render();
   bindGlobals();
-  updateSnapSub();
-  checkSnapReminder();
-  renderSnapshots();   // pre-llena la lista para cuando se abra el drawer
+  checkSnapReminder();   // el toast de recordatorio sigue activo
 
   // Service Worker (sólo HTTP/HTTPS; file:// no soporta SW)
   if ("serviceWorker" in navigator && location.protocol !== "file:") {

@@ -288,6 +288,23 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
 .title-row {
   display: flex; align-items: flex-end; justify-content: space-between;
   margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+  position: relative;
+}
+/* Cuando hay botones de producto, los anclamos arriba-derecha y reservamos
+   espacio para que el texto del título no se solape con ellos. */
+.title-row:has(.prod-acts) > div:first-child { padding-right: 84px; }
+.title-row .prod-acts {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 4px 0 18px;
 }
 .title-row h2 {
   font-family: 'Bebas Neue', sans-serif;
@@ -295,10 +312,17 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
   color: var(--accent);
 }
 .subtitle {
-  font-size: 11px; color: var(--darkest);
-  font-family: monospace; margin-top: 5px; letter-spacing: 1px;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--mute);
+  font-family: monospace; margin-top: 6px; letter-spacing: 0.5px;
+  line-height: 1.6;
+  word-break: break-word;
 }
+/* Opción A · línea continua de metadata separada por "·" */
+.sub-tag    { color: var(--mute); text-transform: uppercase; letter-spacing: 1px; font-size: 10px; }
+.sub-ref    { color: var(--darkest); }
+.sub-price  { color: var(--green); }
+.sub-sep    { color: var(--darkest); opacity: 0.5; margin: 0 6px; }
+/* Compat · pueden aparecer todavía en alguna vista heredada */
 .prod-tag {
   display: inline-block;
   font-size: 9px; letter-spacing: 1.2px;
@@ -328,16 +352,41 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
 .toggle button.active { background: var(--accent-soft); color: var(--accent); }
 
 .prod-acts {
-  display: inline-flex; align-items: center; gap: 8px;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 
+/* Botones de icono (editar / eliminar) — cuadrados, compactos */
+.btn-icon {
+  background: none;
+  border: 1px solid var(--panel-b);
+  border-radius: 8px;
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 14px; line-height: 1;
+  color: var(--mute);
+  opacity: 0.7;
+  transition: all .15s;
+}
+.btn-icon:hover { opacity: 1; }
+.btn-icon-edit:hover {
+  color: var(--text); border-color: var(--mute);
+}
+.btn-icon-del {
+  border-color: rgba(248,113,113,0.15);
+  color: var(--red);
+}
+.btn-icon-del:hover {
+  border-color: rgba(248,113,113,0.40);
+}
+
+/* Compat hacia atrás: si algún sitio aún usa .btn-edit / .btn-del con texto */
 .btn-del {
   background: none; border: 1px solid rgba(248,113,113,0.15); color: var(--red);
   border-radius: 8px; padding: 5px 12px; font-size: 10px; font-family: monospace;
   cursor: pointer; opacity: 0.5; transition: opacity .2s; letter-spacing: 1px;
 }
 .btn-del:hover { opacity: 1; }
-
 .btn-edit {
   background: none; border: 1px solid var(--panel-b); color: var(--mute);
   border-radius: 8px; padding: 5px 12px; font-size: 10px; font-family: monospace;

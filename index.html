@@ -109,6 +109,17 @@
   </div>
 
   <div class="drawer-section">
+    <div class="drawer-section-title">CONFIGURACIÓN</div>
+    <button class="drawer-item" id="btnConfig">
+      <span class="di-icon">⚙</span>
+      <div class="di-body">
+        <div class="di-title">CONFIGURACIÓN</div>
+        <div class="di-sub">API keys y preferencias</div>
+      </div>
+    </button>
+  </div>
+
+  <div class="drawer-section">
     <div class="drawer-section-title">DATOS</div>
     <button class="drawer-item" id="btnExport">
       <span class="di-icon">↑</span>
@@ -181,7 +192,6 @@
       <div><kbd>A</kbd><span>Asignación</span></div>
       <div><kbd>C</kbd><span>Comparar snapshots</span></div>
       <div><kbd>T</kbd><span>Fiscalidad</span></div>
-      <div><kbd>V</kbd><span>Cambiar mes / año</span></div>
       <div><kbd>1</kbd>–<kbd>9</kbd><span>Cambiar pestaña</span></div>
       <div><kbd>Esc</kbd><span>Cerrar diálogos</span></div>
     </div>
@@ -277,6 +287,24 @@
   </div>
 </div>
 
+<!-- Modal configuración -->
+<div class="modal-bg" id="modalConfig">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>CONFIGURACIÓN</h2>
+      <button class="modal-close" data-close="modalConfig">✕</button>
+    </div>
+    <div class="field">
+      <label>TWELVE DATA API KEY <span class="lbl-hint">(para precios de ETFs)</span></label>
+      <input type="text" id="cfgTwelveDataKey" placeholder="Tu API key de twelvedata.com..." autocomplete="off" spellcheck="false">
+      <div class="field-hint">
+        Regístrate gratis en <strong>twelvedata.com</strong> · 800 peticiones/día sin coste. La key se guarda solo en este dispositivo (IndexedDB).
+      </div>
+    </div>
+    <button class="save-btn" id="cfgSave" style="margin-top:24px">GUARDAR</button>
+  </div>
+</div>
+
 <!-- Modal changelog -->
 <div class="modal-bg" id="modalChangelog">
   <div class="modal modal-wide">
@@ -292,6 +320,21 @@
 
     <!-- Entradas del changelog -->
     <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.7</span>
+          <span class="cl-ver-date">Mayo 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Precios automáticos para ETFs vía Twelve Data</strong>: nuevo campo <kbd>TWELVE DATA TICKER</kbd> por producto (formato <code>SÍMBOLO.MIC</code>, ej. <code>IWDA.XAMS</code>, <code>EUNL.XETR</code>) con validación en vivo. Caché 10 min. Soporta separador <code>.</code> o <code>:</code>; el sufijo se envía como parámetro <code>exchange</code> separado a la API.</li>
+          <li><strong>Validación de divisa</strong>: la respuesta de Twelve Data se rechaza si la cotización no es en EUR, con mensaje específico ("Cotiza en USD, no en EUR").</li>
+          <li><strong>Nueva sección CONFIGURACIÓN</strong> en el drawer (entre VISTAS y DATOS): modal para introducir la API key de Twelve Data, persistida en IndexedDB en este dispositivo.</li>
+          <li><strong>Reorganización de KPIs</strong>: cabecera 4×2 con métricas de rentabilidad (VALOR · GANANCIA · ESTE MES · MEJOR MES · TIR · APORTACIÓN MEDIA · RACHA POSITIVA · DCA AUTOMÁTICO). Panel <em>KPIs avanzados · riesgo</em> al final con SHARPE · SORTINO · VOLATILIDAD · DRAWDOWN MÁX.</li>
+          <li>Escala de color de <strong>RACHA POSITIVA</strong>: rojo en 0 meses, ámbar 3-5, verde a partir de 6.</li>
+          <li>Fix móvil: <code>minimum-scale=1</code> y limpieza del margin negativo en tabs para evitar que el lado derecho quede vacío tras pinch-zoom.</li>
+        </ul>
+      </div>
 
       <div class="cl-version">
         <div class="cl-ver-head">
@@ -482,6 +525,25 @@
         <option value="litecoin"></option>
       </datalist>
       <div class="field-hint" id="mpCoinGeckoStatus"></div>
+    </div>
+    <div class="field">
+      <label>TWELVE DATA TICKER <span class="lbl-hint">(SÍMBOLO.MIC — ej. IWDA.XAMS, opcional)</span></label>
+      <input type="text" id="mpTDTicker" list="mpTDList" placeholder="IWDA.XAMS, EUNL.XETR, CSPX.XMIL...">
+      <datalist id="mpTDList">
+        <option value="IWDA.XAMS">MSCI World · Amsterdam · EUR</option>
+        <option value="EUNL.XETR">MSCI World · Xetra · EUR</option>
+        <option value="VWCE.XETR">FTSE All-World · Xetra · EUR</option>
+        <option value="VWRL.XAMS">FTSE All-World dist · Amsterdam · EUR</option>
+        <option value="SXR8.XETR">S&amp;P 500 · Xetra · EUR</option>
+        <option value="CSPX.XMIL">S&amp;P 500 · Milán · EUR</option>
+        <option value="CSSPX.XMIL">S&amp;P 500 (alt) · Milán · EUR</option>
+        <option value="EIMI.XMIL">MSCI EM IMI · Milán · EUR</option>
+        <option value="IS3N.XETR">MSCI EM IMI · Xetra · EUR</option>
+        <option value="SXRV.XETR">Nasdaq 100 · Xetra · EUR</option>
+        <option value="EXSA.XETR">STOXX Europe 600 · Xetra · EUR</option>
+        <option value="SXRT.XETR">EURO STOXX 50 · Xetra · EUR</option>
+      </datalist>
+      <div class="field-hint" id="mpTDStatus"></div>
     </div>
     <div class="field">
       <label>% OBJETIVO EN CARTERA <span class="lbl-hint">(para asignación, opcional)</span></label>

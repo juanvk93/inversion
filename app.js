@@ -48,6 +48,12 @@ const SNAP_MAX           = 20;   // máximo de snapshots in-app (los más antigu
 const COINGECKO_BASE = "https://api.coingecko.com/api/v3/simple/price";
 const COINGECKO_TTL  = 5 * 60 * 1000;   // 5 minutos de caché
 
+// Twelve Data · API pública con CORS abierto (sin proxy). Requiere API key
+// gratis (registro en twelvedata.com — 800 req/día). Cobertura excelente
+// para ETFs/acciones internacionales. Devuelve precio + divisa.
+const TWELVEDATA_BASE = "https://api.twelvedata.com/quote";
+const TWELVEDATA_TTL  = 10 * 60 * 1000;   // 10 min
+
 // Tramos IRPF 2026 (renta del ahorro, modelo D-100)
 const FISCAL_TRAMOS_2026 = [
   { hasta:    6000, tipo: 0.19 },
@@ -234,7 +240,6 @@ const state = {
   entradas:       {},
   objetivos:      [],
   tab:            "total",
-  vistaAno:       false,
   horizonte:      20,
   aportMensual:   null,
   filtroPeriodo:  "all",
@@ -250,11 +255,15 @@ const state = {
   diffSnapA:       null,         // id del snapshot A
   diffSnapB:       "current",    // id del snapshot B o "current"
   fiscalSim:       {},           // { [productoId]: { venderEur: number } }
+  // Configuración
+  twelveDataApiKey: "",          // API key para precios de ETFs vía Twelve Data
 };
 
 // Caché de precios (no persiste — solo en memoria)
 const priceCache = {};          // { coingeckoId: { eur, ts } }
 const priceFetching = {};       // { coingeckoId: Promise } — evita duplicados
+const twelveDataCache    = {};       // { ticker: { eur, ts, currency } }
+const twelveDataFetching = {};
 
 const charts = {};
 
@@ -302,6 +311,8 @@ async function loadState() {
         if (firePrefs.gasto != null) state.fireGasto = firePrefs.gasto;
         if (firePrefs.regla != null) state.fireRegla = firePrefs.regla;
       }
+      const tdKey = await readField("twelveDataApiKey");
+      if (typeof tdKey === "string") state.twelveDataApiKey = tdKey;
     } else {
       // 2. Primer arranque con IndexedDB: migrar desde localStorage si existe
       const p = JSON.parse(localStorage.getItem(STORE_K_P) || "null");
@@ -358,6 +369,7 @@ function saveState() {
       await writeField("entradas",  state.entradas);
       await writeField("objetivos", state.objetivos);
       await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
+      await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
       hideSaveError();
     })
     .catch(err => {
@@ -752,7 +764,7 @@ function tipoMedioEfectivo(ganancia) {
   return calcImpuestoPlusvalia(ganancia) / ganancia;
 }
 
-// Filtra filas por periodo. periodo: "all" | "3m" | "6m" | "1y" | "ytd"
+// Filtra filas por periodo. periodo: "all" | "3m" | "6m" | "ytd" | "1y" | "2y" | "3y" | "5y"
 function filtrarFilas(filas, periodo) {
   if (!filas?.length || periodo === "all" || !periodo) return filas;
   const ult = filas.at(-1).fecha;
@@ -761,6 +773,9 @@ function filtrarFilas(filas, periodo) {
   if      (periodo === "3m") cm -= 2;   // últimos 3 meses incluyendo el actual
   else if (periodo === "6m") cm -= 5;
   else if (periodo === "1y") cm -= 11;
+  else if (periodo === "2y") cm -= 23;
+  else if (periodo === "3y") cm -= 35;
+  else if (periodo === "5y") cm -= 59;
   else if (periodo === "ytd") { cm = 1; cy = uy; }
   while (cm <= 0) { cm += 12; cy--; }
   const cutoff = `${cy}-${String(cm).padStart(2,"0")}`;
@@ -936,6 +951,7 @@ function generarJSON() {
       unidades:           Number.isFinite(+p.unidades) ? +p.unidades : 0,
       precioManual:       Number.isFinite(+p.precioManual) ? +p.precioManual : 0,
       coingeckoId:        p.coingeckoId || "",
+      twelveDataTicker:   p.twelveDataTicker || "",
       asignacionObjetivo: Number.isFinite(+p.asignacionObjetivo) ? +p.asignacionObjetivo : 0,
     })),
     entradas: Object.fromEntries(
@@ -1012,6 +1028,7 @@ function importarJSON(texto) {
       unidades:           num(p.unidades),
       precioManual:       num(p.precioManual),
       coingeckoId:        String(p.coingeckoId || "").toLowerCase().replace(/[^a-z0-9-]/g, ""),
+      twelveDataTicker:   String(p.twelveDataTicker || "").toUpperCase().replace(/[^A-Z0-9.:^-]/g, ""),
       asignacionObjetivo: Math.max(0, Math.min(100, num(p.asignacionObjetivo))),
     };
   });
@@ -1172,7 +1189,6 @@ async function restaurarSnapshot(id) {
   state.productos = clone(snap.productos);
   state.entradas  = clone(snap.entradas);
   state.tab       = state.productos[0]?.id || "total";
-  state.vistaAno  = false;
   invalidateStatsCache();
   saveState();
   render();
@@ -1243,17 +1259,25 @@ function hideSnapToast() { $("#snapToast").style.display = "none"; }
 function checkSnapReminder() { if (diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast(); }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 5c. PRECIOS · CoinGecko + precio manual
+// 5c. PRECIOS · CoinGecko (cripto) + Twelve Data (ETFs) + precio manual
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Devuelve precio en EUR para un producto. Si tiene coingeckoId usa la caché
-// (con fetch en background si está caducada). Si no, usa precioManual.
+// Devuelve precio en EUR para un producto. Prioridad:
+//   1. coingeckoId       (cripto, vía CoinGecko)
+//   2. twelveDataTicker  (ETF/acción cotizado en EUR, vía Twelve Data)
+//   3. precioManual      (fallback estático)
 function getProductPriceSync(prod) {
   if (!prod) return null;
   if (prod.coingeckoId) {
     const c = priceCache[prod.coingeckoId];
     if (c && Number.isFinite(c.eur)) {
       return { eur: c.eur, ts: c.ts, source: "coingecko", id: prod.coingeckoId };
+    }
+  }
+  if (prod.twelveDataTicker) {
+    const c = twelveDataCache[prod.twelveDataTicker];
+    if (c && Number.isFinite(c.eur)) {
+      return { eur: c.eur, ts: c.ts, source: "twelvedata", id: prod.twelveDataTicker };
     }
   }
   if (Number.isFinite(+prod.precioManual) && +prod.precioManual > 0) {
@@ -1288,18 +1312,85 @@ async function fetchCoinGeckoPrice(id) {
   return priceFetching[id];
 }
 
-// Refresca en background los precios de todos los productos con coingeckoId
-// y vuelve a renderizar si llega algo nuevo. Llamado tras cada render.
+// Twelve Data · llama al endpoint /quote (precio + divisa). Requiere API key
+// del usuario almacenada en state.twelveDataApiKey. Solo aceptamos EUR.
+// Acepta tickers en formato "SYMBOL", "SYMBOL.EXCHANGE" o "SYMBOL:EXCHANGE";
+// el sufijo se envía como parámetro 'exchange' separado (Twelve Data no acepta
+// el formato combinado).
+async function fetchTwelveDataPrice(ticker) {
+  if (!ticker) return null;
+  const apiKey = (state.twelveDataApiKey || "").trim();
+  if (!apiKey) {
+    twelveDataCache[ticker] = { error: "Falta API key (Configuración)", ts: Date.now() };
+    return null;
+  }
+  const cached = twelveDataCache[ticker];
+  if (cached && Number.isFinite(cached.eur) && Date.now() - cached.ts < TWELVEDATA_TTL) return cached;
+  if (twelveDataFetching[ticker]) return twelveDataFetching[ticker];
+  twelveDataFetching[ticker] = (async () => {
+    try {
+      // Separar SYMBOL.SUFFIX o SYMBOL:SUFFIX. Twelve Data distingue entre
+      // `mic_code` (ISO 10383, 4 letras tipo XAMS/XETR) y `exchange` (nombre
+      // como "XETRA" o "NASDAQ"). Detectamos el formato del sufijo.
+      let symbol = ticker, suffix = null;
+      const m = ticker.match(/^([A-Z0-9-]+)[.:](.+)$/);
+      if (m) { symbol = m[1]; suffix = m[2]; }
+      const params = new URLSearchParams({ symbol, apikey: apiKey });
+      if (suffix) {
+        if (/^X[A-Z]{3}$/.test(suffix)) {
+          params.set("mic_code", suffix);   // MIC ISO: XAMS, XETR, XMIL, XPAR, ...
+        } else {
+          params.set("exchange", suffix);   // Nombre: XETRA, NASDAQ, Borsa Italiana, ...
+        }
+      }
+      const url = `${TWELVEDATA_BASE}?${params}`;
+      const r = await fetch(url, { headers: { accept: "application/json" } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      if (data?.status === "error" || data?.code >= 400) {
+        throw new Error(data.message || "Error de la API");
+      }
+      const price    = parseFloat(data?.close);
+      const currency = data?.currency;
+      if (!Number.isFinite(price)) throw new Error("Sin precio en respuesta");
+      if (currency && currency !== "EUR") {
+        throw new Error(`Cotiza en ${currency}, no en EUR`);
+      }
+      twelveDataCache[ticker] = { eur: price, ts: Date.now(), currency: currency || "EUR" };
+      return twelveDataCache[ticker];
+    } catch (err) {
+      console.warn("[Cartera] Twelve Data falló para", ticker, err);
+      twelveDataCache[ticker] = { error: err.message, ts: Date.now() };
+      return null;
+    } finally {
+      delete twelveDataFetching[ticker];
+    }
+  })();
+  return twelveDataFetching[ticker];
+}
+
+// Refresca en background los precios (CoinGecko y Twelve Data) de todos los
+// productos y vuelve a renderizar si llega algo nuevo. Llamado tras cada render.
 async function refreshAllPricesAsync() {
-  const ids = state.productos
+  const cgIds = state.productos
     .map(p => p.coingeckoId)
     .filter(id => id && (!priceCache[id] || Date.now() - priceCache[id].ts >= COINGECKO_TTL));
-  if (!ids.length) return;
-  const before = ids.map(id => priceCache[id]?.eur);
-  await Promise.all(ids.map(fetchCoinGeckoPrice));
-  const changed = ids.some((id, i) => priceCache[id]?.eur !== before[i]);
-  // Solo re-renderizar si hay cambios y seguimos en la misma tab interesada
-  if (changed && needsPriceRender()) render();
+  const tdIds = (state.twelveDataApiKey || "").trim()
+    ? state.productos
+        .map(p => p.twelveDataTicker)
+        .filter(id => id && (!twelveDataCache[id]?.eur || Date.now() - twelveDataCache[id].ts >= TWELVEDATA_TTL))
+    : [];
+  if (!cgIds.length && !tdIds.length) return;
+
+  const cgBefore = cgIds.map(id => priceCache[id]?.eur);
+  const tdBefore = tdIds.map(id => twelveDataCache[id]?.eur);
+  await Promise.all([
+    ...cgIds.map(fetchCoinGeckoPrice),
+    ...tdIds.map(fetchTwelveDataPrice),
+  ]);
+  const changedCg = cgIds.some((id, i) => priceCache[id]?.eur !== cgBefore[i]);
+  const changedTd = tdIds.some((id, i) => twelveDataCache[id]?.eur !== tdBefore[i]);
+  if ((changedCg || changedTd) && needsPriceRender()) render();
 }
 
 function needsPriceRender() {
@@ -1317,6 +1408,13 @@ function priceAgeLabel(ts) {
   if (min < 60)  return `hace ${min} min`;
   const h = Math.round(min / 60);
   return `hace ${h} h`;
+}
+
+// Etiqueta corta de la fuente para los badges
+function priceSourceLabel(source) {
+  if (source === "coingecko") return "CG";
+  if (source === "twelvedata") return "TD";
+  return "manual";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1686,7 +1784,6 @@ function renderTabs() {
     b.onclick = () => {
       if (_touchDragHappened) { _touchDragHappened = false; return; }
       state.tab = b.dataset.tab;
-      state.vistaAno = false;
       render();
     };
   });
@@ -1817,22 +1914,24 @@ function renderTabActual() {
   const titulo = esTotal ? "CARTERA TOTAL" : prod.nombre.toUpperCase();
   let subHTML;
   if (esTotal) {
-    subHTML = esc(state.productos.map(p => p.nombre).join("  ·  "));
+    subHTML = esc(state.productos.map(p => p.nombre).join(" · "));
   } else {
-    const tags = [];
-    if (prod.tipologia) tags.push(`<span class="prod-tag">${esc(prod.tipologia)}</span>`);
-    if (prod.divisa)    tags.push(`<span class="prod-tag">${esc(prod.divisa)}</span>`);
-    // Badge de precio actual y unidades, si están disponibles
+    // Opción A: línea continua de metadata separada por " · ", sin chips.
+    const parts = [];
+    if (prod.tipologia)  parts.push(`<span class="sub-tag">${esc(prod.tipologia)}</span>`);
+    if (prod.divisa)     parts.push(`<span class="sub-tag">${esc(prod.divisa)}</span>`);
+    if (prod.referencia) parts.push(`<span class="sub-ref">${esc(prod.referencia)}</span>`);
     const price = getProductPriceSync(prod);
     if (price) {
-      const fuente = price.source === "coingecko" ? `CG · ${priceAgeLabel(price.ts)}` : "manual";
-      tags.push(`<span class="prod-tag prod-tag-price" title="Precio unitario actual">${fmtE(price.eur)}/u · ${fuente}</span>`);
+      const fuente = price.source === "manual"
+        ? "manual"
+        : `${priceSourceLabel(price.source)} · ${priceAgeLabel(price.ts)}`;
+      parts.push(`<span class="sub-price" title="Precio unitario actual">${fmtE(price.eur)}/u · ${fuente}</span>`);
     }
     if (Number.isFinite(+prod.unidades) && +prod.unidades > 0) {
-      tags.push(`<span class="prod-tag">${(+prod.unidades).toLocaleString("es-ES", { maximumFractionDigits: 8 })} u</span>`);
+      parts.push(`<span class="sub-tag">${(+prod.unidades).toLocaleString("es-ES", { maximumFractionDigits: 8 })} u</span>`);
     }
-    const refTxt = prod.referencia ? `<span class="prod-ref">${esc(prod.referencia)}</span>` : "";
-    subHTML = [tags.join(""), refTxt].filter(Boolean).join(" ");
+    subHTML = parts.join(`<span class="sub-sep">·</span>`);
   }
   const comentariosHTML = !esTotal && prod.comentarios
     ? `<div class="prod-coment">${esc(prod.comentarios)}</div>`
@@ -1840,6 +1939,9 @@ function renderTabActual() {
 
   const PERIODOS = [
     { id: "all", l: "TODO" },
+    { id: "5y",  l: "5A"   },
+    { id: "3y",  l: "3A"   },
+    { id: "2y",  l: "2A"   },
     { id: "1y",  l: "1A"   },
     { id: "ytd", l: "YTD"  },
     { id: "6m",  l: "6M"   },
@@ -1854,18 +1956,19 @@ function renderTabActual() {
         ${comentariosHTML}
         ${streak >= 2 ? `<div class="streak-badge">🔥 ${streak} MES${streak===1?"":"ES"} SEGUIDO${streak===1?"":"S"} APORTANDO</div>` : ""}
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-        <div class="filter-period">
-          ${PERIODOS.map(p => `<button class="${state.filtroPeriodo===p.id?"active":""}" data-period="${p.id}">${p.l}</button>`).join("")}
-        </div>
-        <div class="toggle">
-          <button class="${!state.vistaAno ? "active" : ""}" data-vista="mes">MES</button>
-          <button class="${state.vistaAno  ? "active" : ""}" data-vista="ano">AÑO</button>
-        </div>
-        ${!esTotal ? `<div class="prod-acts">
-          <button class="btn-edit" id="btnEditProd">EDITAR</button>
-          <button class="btn-del" id="btnDelProd">ELIMINAR</button>
-        </div>` : ""}
+      ${!esTotal ? `<div class="prod-acts">
+        <button class="btn-icon btn-icon-edit" id="btnEditProd" title="Editar producto" aria-label="Editar producto">✎</button>
+        <button class="btn-icon btn-icon-del"  id="btnDelProd"  title="Eliminar producto" aria-label="Eliminar producto">✕</button>
+      </div>` : ""}
+    </div>
+  `;
+
+  // Controles (filtro periodo) se renderizan debajo de los KPIs para que
+  // la cabecera quede limpia y la información financiera salte arriba.
+  const filterRowHTML = `
+    <div class="filter-row">
+      <div class="filter-period">
+        ${PERIODOS.map(p => `<button class="${state.filtroPeriodo===p.id?"active":""}" data-period="${p.id}">${p.l}</button>`).join("")}
       </div>
     </div>
   `;
@@ -1931,6 +2034,9 @@ function renderTabActual() {
     </div>
   `).join("")}</div>`;
 
+  // Controles (filtro periodo + MES/AÑO + EDITAR/ELIMINAR) debajo de los KPIs
+  html += filterRowHTML;
+
   let tirData = null;
   if (esTotal && state.productos.length > 1) {
     tirData = state.productos.map(p => ({ nombre: p.nombre, tir: calcTIR(state.entradas[p.id] || []), color: p.color }));
@@ -1974,6 +2080,11 @@ function renderTabActual() {
   </div>`;
 
   html += `<div class="panel">
+    <div class="panel-title">RENTABILIDAD ACUMULADA (%)</div>
+    ${sparseFilter ? emptyChart : `<div class="chart-box short"><canvas id="chartRent"></canvas></div>`}
+  </div>`;
+
+  html += `<div class="panel">
     <div class="panel-title">HEATMAP RENTABILIDAD MENSUAL (%)</div>
     ${renderHeatmap(filas)}
   </div>`;
@@ -1986,16 +2097,10 @@ function renderTabActual() {
     </div>`;
   }
 
-  html += `<div class="panel">
-    <div class="panel-title">RENTABILIDAD ACUMULADA (%)</div>
-    ${sparseFilter ? emptyChart : `<div class="chart-box short"><canvas id="chartRent"></canvas></div>`}
-  </div>`;
-
   html += renderObjetivos(esTotal ? null : state.tab, ultima.valor);
 
-  if (state.vistaAno)   html += renderTablaAno(filas, accent);
-  else if (esTotal)     html += renderTablaTotal(filas, accent);
-  else                  html += renderTablaProd(filas, accent, ultima);
+  if (esTotal) html += renderTablaTotal(filas, accent);
+  else         html += renderTablaProd(filas, accent, ultima);
 
   html += renderResumenFiscal(filas);
   html += renderKpisExtra(filasFull, ultima, tirActual);
@@ -2172,30 +2277,6 @@ function renderTablaTotal(filas, accent) {
   }).join("");
 
   return `<div class="table">${head}${groups}</div>`;
-}
-
-function renderTablaAno(filas, accent) {
-  const g = agruparPorAno(filas);
-  const head = `<div class="tr head cols-year">
-    <span>AÑO</span><span class="center">MESES</span><span class="right">APORTADO</span>
-    <span class="right">VALOR FIN</span><span class="right">GANANCIA</span>
-    <span class="right">RENT TOTAL</span><span class="right">RENT AÑO</span>
-  </div>`;
-  const rows = [...g].reverse().map(y => `
-    <div class="tr cols-year">
-      <span class="bebas" style="color:${accent};font-size:17px">${y.ano}</span>
-      <span class="mono-sm center" style="color:var(--dim)" data-l="MESES">${y.meses}</span>
-      <span class="mono right" style="color:var(--mute)" data-l="APORTADO">${fmtE(y.aportadoAno)}</span>
-      <span class="mono right bold" style="color:var(--text)" data-l="VALOR FIN">${fmtE(y.valorFin)}</span>
-      <span class="mono right ${y.ganancia>=0?"pos":"neg"}" data-l="GANANCIA">${fmtE(y.ganancia)}</span>
-      <span class="mono right bold ${y.rentPct>=0?"pos":"neg"}" data-l="RENT TOTAL">${y.rentPct>=0?"+":""}${fmt(y.rentPct)}%</span>
-      <span class="mono right bold ${y.rentAno == null ? "" : (y.rentAno>=0?"pos":"neg")}" style="${y.rentAno == null ? "color:var(--dimmer)" : ""}" data-l="RENT AÑO">${y.rentAno != null ? `${y.rentAno>=0?"+":""}${fmt(y.rentAno)}%` : "—"}</span>
-    </div>
-  `).join("");
-  const footer = `<div style="padding:10px 20px;background:var(--accent-soft);border-top:1px solid var(--accent-line)">
-    <p style="font-size:9px;font-family:monospace;color:${accent};letter-spacing:2px">RENT TOTAL = ganancia acumulada / aportado total · RENT AÑO ≈ rentabilidad explicada por mercado en ese año</p>
-  </div>`;
-  return `<div class="table">${head}${rows}${footer}</div>`;
 }
 
 function renderResumenFiscal(filas) {
@@ -3423,30 +3504,45 @@ function setupCalcHelper(prod) {
   if (!prod) { helper.style.display = "none"; return; }
   const tieneUnidades = Number.isFinite(+prod.unidades) && +prod.unidades > 0;
   const tieneCripto   = !!prod.coingeckoId;
+  const tieneTD       = !!prod.twelveDataTicker;
   const tienePrecMan  = Number.isFinite(+prod.precioManual) && +prod.precioManual > 0;
-  if (!tieneUnidades && !tieneCripto && !tienePrecMan) {
+  if (!tieneUnidades && !tieneCripto && !tieneTD && !tienePrecMan) {
     helper.style.display = "none";
     return;
   }
   helper.style.display = "block";
   $("#calcUnidades").value = tieneUnidades ? +prod.unidades : "";
+  const labelFuente = (price) => {
+    if (price.source === "coingecko")  return `CoinGecko · ${priceAgeLabel(price.ts)}`;
+    if (price.source === "twelvedata") return `Twelve Data · ${priceAgeLabel(price.ts)}`;
+    return "Precio manual del producto";
+  };
   const price = getProductPriceSync(prod);
   if (price) {
     $("#calcPrecio").value = price.eur;
-    $("#calcSource").textContent = price.source === "coingecko"
-      ? `CoinGecko · ${priceAgeLabel(price.ts)}`
-      : "Precio manual del producto";
+    $("#calcSource").textContent = labelFuente(price);
   } else {
     $("#calcPrecio").value = "";
     $("#calcSource").textContent = "Introduce un precio";
   }
-  // Si tiene coingeckoId pero la caché está fría, dispara refresh y actualiza
+  // Si la caché de CoinGecko está fría, dispara refresh
   if (tieneCripto && (!priceCache[prod.coingeckoId] ||
       Date.now() - priceCache[prod.coingeckoId].ts >= COINGECKO_TTL)) {
     fetchCoinGeckoPrice(prod.coingeckoId).then(res => {
       if (res && $("#modalEntrada").classList.contains("open")) {
         $("#calcPrecio").value = res.eur;
         $("#calcSource").textContent = `CoinGecko · ${priceAgeLabel(res.ts)}`;
+        recalcCalcResult();
+      }
+    });
+  }
+  // Si la caché de Twelve Data está fría, dispara refresh (solo si no hay CoinGecko, que tiene prioridad)
+  if (!tieneCripto && tieneTD && (!twelveDataCache[prod.twelveDataTicker]?.eur ||
+      Date.now() - twelveDataCache[prod.twelveDataTicker].ts >= TWELVEDATA_TTL)) {
+    fetchTwelveDataPrice(prod.twelveDataTicker).then(res => {
+      if (res && $("#modalEntrada").classList.contains("open")) {
+        $("#calcPrecio").value = res.eur;
+        $("#calcSource").textContent = `Twelve Data · ${priceAgeLabel(res.ts)}`;
         recalcCalcResult();
       }
     });
@@ -3505,8 +3601,10 @@ function openProdModal(prod = null) {
   $("#mpUnidades").value      = prod?.unidades      ?? "";
   $("#mpPrecioManual").value  = prod?.precioManual  ?? "";
   $("#mpCoingeckoId").value   = prod?.coingeckoId   || "";
+  $("#mpTDTicker").value      = prod?.twelveDataTicker || "";
   $("#mpAsignacion").value    = prod?.asignacionObjetivo ?? "";
   $("#mpCoinGeckoStatus").textContent = "";
+  $("#mpTDStatus").textContent        = "";
   $("#mpTipologiaList").innerHTML = TIPOLOGIAS.map(t => `<option value="${esc(t)}"></option>`).join("");
   $("#mpDivisaList").innerHTML    = DIVISAS.map(d => `<option value="${esc(d)}"></option>`).join("");
   state.productoColor       = prod?.color || COLORES[0];
@@ -3515,6 +3613,7 @@ function openProdModal(prod = null) {
   renderColorPicker();
   refreshProdSaveBtn();
   if (prod?.coingeckoId) verifyCoinGeckoId(prod.coingeckoId);
+  if (prod?.twelveDataTicker) verifyTwelveDataTicker(prod.twelveDataTicker);
   $("#modalProd").classList.add("open");
   closeDrawer();
 }
@@ -3531,6 +3630,29 @@ async function verifyCoinGeckoId(id) {
     el.className = "field-hint ok";
   } else {
     el.textContent = `✗ ID no encontrado en CoinGecko`;
+    el.className = "field-hint err";
+  }
+}
+
+async function verifyTwelveDataTicker(ticker) {
+  const el = $("#mpTDStatus");
+  if (!el) return;
+  if (!ticker) { el.textContent = ""; el.className = "field-hint"; return; }
+  if (!(state.twelveDataApiKey || "").trim()) {
+    el.textContent = "⚠ Configura primero tu API key en Configuración";
+    el.className = "field-hint err";
+    return;
+  }
+  el.textContent = "Verificando…";
+  el.className = "field-hint";
+  const res = await fetchTwelveDataPrice(ticker);
+  if (res && Number.isFinite(res.eur)) {
+    el.textContent = `✓ ${fmtE(res.eur)} · Twelve Data`;
+    el.className = "field-hint ok";
+  } else {
+    const cached = twelveDataCache[ticker];
+    const msg = cached?.error || "Ticker desconocido en Twelve Data";
+    el.textContent = `✗ ${msg}`;
     el.className = "field-hint err";
   }
 }
@@ -3567,6 +3689,7 @@ function saveProd() {
   const unidades     = numOrZero("#mpUnidades");
   const precioManual = numOrZero("#mpPrecioManual");
   const coingeckoId  = $("#mpCoingeckoId").value.trim().toLowerCase();
+  const twelveDataTicker = $("#mpTDTicker").value.trim().toUpperCase();
   const asignRaw     = parseFloat($("#mpAsignacion").value);
   const asignacion   = Number.isFinite(asignRaw) ? Math.max(0, Math.min(100, asignRaw)) : 0;
   if (state.editProdId) {
@@ -3581,6 +3704,7 @@ function saveProd() {
       prod.unidades           = unidades;
       prod.precioManual       = precioManual;
       prod.coingeckoId        = coingeckoId;
+      prod.twelveDataTicker   = twelveDataTicker;
       prod.asignacionObjetivo = asignacion;
     }
   } else {
@@ -3588,15 +3712,15 @@ function saveProd() {
     state.productos.push({
       id, nombre, referencia, tipologia, divisa, comentarios,
       color: state.productoColor,
-      unidades, precioManual, coingeckoId,
+      unidades, precioManual, coingeckoId, twelveDataTicker,
       asignacionObjetivo: asignacion,
     });
     state.entradas[id] = [];
     state.tab          = id;
-    state.vistaAno     = false;
   }
   state.editProdId = null;
   if (coingeckoId) fetchCoinGeckoPrice(coingeckoId);
+  if (twelveDataTicker) fetchTwelveDataPrice(twelveDataTicker);
   saveState();
   $("#modalProd").classList.remove("open");
   render();
@@ -3786,6 +3910,7 @@ async function enableEncryption() {
     await writeField("entradas",  state.entradas);
     await writeField("objetivos", state.objetivos);
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
+    await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     $("#modalSeguridad").classList.remove("open");
     flash();
     alert("✓ Cifrado activado. La próxima vez que abras la app se te pedirá la passphrase.");
@@ -3806,6 +3931,7 @@ async function disableEncryption() {
     await dbPut(DB_KV, state.entradas,  "entradas");
     await dbPut(DB_KV, state.objetivos, "objetivos");
     await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla }, "firePrefs");
+    await dbPut(DB_KV, state.twelveDataApiKey || "", "twelveDataApiKey");
     $("#modalSeguridad").classList.remove("open");
     flash();
     alert("✓ Cifrado desactivado.");
@@ -3842,6 +3968,7 @@ async function changePassphrase() {
     await writeField("entradas",  state.entradas);
     await writeField("objetivos", state.objetivos);
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
+    await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     $("#modalSeguridad").classList.remove("open");
     flash();
     alert("✓ Passphrase cambiada.");
@@ -3950,42 +4077,30 @@ function handleShortcut(e) {
     case "p":
       e.preventDefault();
       state.tab = "proyeccion";
-      state.vistaAno = false;
       closeDrawer();
       render();
-      break;
-    case "v":
-      if (!_reservadosShortcut.has(state.tab) || state.tab === "total") {
-        e.preventDefault();
-        state.vistaAno = !state.vistaAno;
-        render();
-      }
       break;
     case "f":
       e.preventDefault();
       state.tab = "fire";
-      state.vistaAno = false;
       closeDrawer();
       render();
       break;
     case "a":
       e.preventDefault();
       state.tab = "asignacion";
-      state.vistaAno = false;
       closeDrawer();
       render();
       break;
     case "c":
       e.preventDefault();
       state.tab = "diff";
-      state.vistaAno = false;
       closeDrawer();
       render();
       break;
     case "t":
       e.preventDefault();
       state.tab = "fiscal";
-      state.vistaAno = false;
       closeDrawer();
       render();
       break;
@@ -4000,7 +4115,6 @@ function handleShortcut(e) {
         if (ids[i]) {
           e.preventDefault();
           state.tab = ids[i];
-          state.vistaAno = false;
           render();
         }
       }
@@ -4012,7 +4126,6 @@ function handleShortcut(e) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function bindCommon() {
-  $$('[data-vista]').forEach(b => b.onclick = () => { state.vistaAno = b.dataset.vista === "ano"; render(); });
   $$('[data-period]').forEach(b => b.onclick = () => { state.filtroPeriodo = b.dataset.period; render(); });
   $$('[data-edit]').forEach(b => b.onclick = () => {
     const id = b.dataset.edit;
@@ -4076,12 +4189,12 @@ function bindGlobals() {
     e.target.value = "";
   };
   $("#btnSnapshot").onclick      = crearSnapshot;
-  $("#btnProyeccion").onclick    = () => { state.tab = "proyeccion"; state.vistaAno = false; closeDrawer(); render(); };
+  $("#btnProyeccion").onclick    = () => { state.tab = "proyeccion"; closeDrawer(); render(); };
   $("#btnObjetivos").onclick     = openObjetivosModal;
-  $("#btnFire").onclick          = () => { state.tab = "fire"; state.vistaAno = false; closeDrawer(); render(); };
-  $("#btnAsignacion").onclick    = () => { state.tab = "asignacion"; state.vistaAno = false; closeDrawer(); render(); };
-  $("#btnDiff").onclick          = () => { state.tab = "diff"; state.vistaAno = false; closeDrawer(); render(); };
-  $("#btnFiscal").onclick        = () => { state.tab = "fiscal"; state.vistaAno = false; closeDrawer(); render(); };
+  $("#btnFire").onclick          = () => { state.tab = "fire"; closeDrawer(); render(); };
+  $("#btnAsignacion").onclick    = () => { state.tab = "asignacion"; closeDrawer(); render(); };
+  $("#btnDiff").onclick          = () => { state.tab = "diff"; closeDrawer(); render(); };
+  $("#btnFiscal").onclick        = () => { state.tab = "fiscal"; closeDrawer(); render(); };
   $("#btnChangelog").onclick     = openChangelog;
   $("#btnNewProdDrawer").onclick = openProdModal;
 
@@ -4121,6 +4234,17 @@ function bindGlobals() {
       coinTimer = setTimeout(() => verifyCoinGeckoId(v), 600);
     };
   }
+  // Validación Twelve Data ticker (mismo patrón)
+  if ($("#mpTDTicker")) {
+    let tdTimer = null;
+    $("#mpTDTicker").oninput = () => {
+      clearTimeout(tdTimer);
+      const v = $("#mpTDTicker").value.trim().toUpperCase();
+      $("#mpTDStatus").textContent = v ? "…" : "";
+      $("#mpTDStatus").className = "field-hint";
+      tdTimer = setTimeout(() => verifyTwelveDataTicker(v), 600);
+    };
+  }
 
   $$('[data-close]').forEach(b => b.onclick = () => $("#" + b.dataset.close).classList.remove("open"));
   $$('.modal-bg').forEach(bg => bg.onclick = (e) => { if (e.target === bg) bg.classList.remove("open"); });
@@ -4132,8 +4256,30 @@ function bindGlobals() {
   $("#btnPDF").onclick = exportarPDF;
   $("#btnSeguridad").onclick = openSeguridadModal;
 
+  // Configuración (API keys)
+  $("#btnConfig").onclick = openConfigModal;
+  $("#cfgSave").onclick   = saveConfig;
+
   // Atajos
   document.addEventListener("keydown", handleShortcut);
+}
+
+function openConfigModal() {
+  $("#cfgTwelveDataKey").value = state.twelveDataApiKey || "";
+  $("#modalConfig").classList.add("open");
+  closeDrawer();
+}
+
+function saveConfig() {
+  const key = $("#cfgTwelveDataKey").value.trim();
+  state.twelveDataApiKey = key;
+  // Si la key cambia, invalidamos la caché (los precios viejos pueden ser inválidos)
+  Object.keys(twelveDataCache).forEach(k => delete twelveDataCache[k]);
+  saveState();
+  $("#modalConfig").classList.remove("open");
+  flash();
+  // Refresca precios si hay productos con ticker configurado
+  refreshAllPricesAsync();
 }
 
 // ── Tema claro/oscuro ─────────────────────────────────────────────────────

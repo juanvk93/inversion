@@ -1,4 +1,4 @@
-/* MI CARTERA · Service Worker
+/* MI CARTERA · Service Worker · 
    Estrategia: cache-first con revalidación en segundo plano (stale-while-revalidate).
    - Pre-caché de assets locales en install
    - CDN externos (Chart.js, Google Fonts) se cachean bajo demanda */

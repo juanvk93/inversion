@@ -2235,21 +2235,53 @@ function bindTabDrag() {
       reorderProductos(_dragId, btn.dataset.tab);
     });
 
-    // Touch drag (móvil)
+    // Touch drag (móvil) — long-press para iniciar drag, así el scroll
+    // horizontal nativo funciona en toques cortos (tap o swipe).
     let _tsrc = null;
-    btn.addEventListener("touchstart", () => { _tsrc = btn.dataset.tab; }, { passive: true });
+    let _tStartX = 0, _tStartY = 0;
+    let _tLongPress = null;
+    let _tDragging = false;
+    const _tCancel = () => {
+      if (_tLongPress) { clearTimeout(_tLongPress); _tLongPress = null; }
+      _tsrc = null;
+      _tDragging = false;
+      btn.classList.remove("dragging");
+      $$("#tabs .tab").forEach(b => b.classList.remove("drag-over"));
+    };
+    btn.addEventListener("touchstart", e => {
+      _tsrc = btn.dataset.tab;
+      _tDragging = false;
+      _tStartX = e.touches[0].clientX;
+      _tStartY = e.touches[0].clientY;
+      _tLongPress = setTimeout(() => {
+        _tDragging = true;
+        btn.classList.add("dragging");
+        if (navigator.vibrate) navigator.vibrate(15);
+      }, 400);
+    }, { passive: true });
     btn.addEventListener("touchmove", e => {
       if (!_tsrc) return;
+      const pt = e.touches[0];
+      if (!_tDragging) {
+        const dx = Math.abs(pt.clientX - _tStartX);
+        const dy = Math.abs(pt.clientY - _tStartY);
+        if (dx > 8 || dy > 8) {
+          if (_tLongPress) { clearTimeout(_tLongPress); _tLongPress = null; }
+          _tsrc = null;
+        }
+        return;
+      }
       e.preventDefault();
-      const pt  = e.touches[0];
       const el  = document.elementFromPoint(pt.clientX, pt.clientY);
       const tgt = el?.closest?.(".tab[draggable='true']");
       $$("#tabs .tab").forEach(b => b.classList.remove("drag-over"));
       if (tgt && tgt.dataset.tab !== _tsrc) tgt.classList.add("drag-over");
     }, { passive: false });
     btn.addEventListener("touchend", e => {
+      if (_tLongPress) { clearTimeout(_tLongPress); _tLongPress = null; }
+      btn.classList.remove("dragging");
       $$("#tabs .tab").forEach(b => b.classList.remove("drag-over"));
-      if (!_tsrc) return;
+      if (!_tsrc || !_tDragging) { _tsrc = null; _tDragging = false; return; }
       const pt  = e.changedTouches[0];
       const el  = document.elementFromPoint(pt.clientX, pt.clientY);
       const tgt = el?.closest?.(".tab[draggable='true']");
@@ -2258,7 +2290,9 @@ function bindTabDrag() {
         reorderProductos(_tsrc, tgt.dataset.tab);
       }
       _tsrc = null;
+      _tDragging = false;
     });
+    btn.addEventListener("touchcancel", _tCancel);
   });
 }
 
@@ -2275,7 +2309,7 @@ function render() {
   renderTabs();
 
   const btnAdd = $("#btnAddEntry");
-  const reservados = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
+  const reservados = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
   const esProd = !reservados.has(state.tab);
   btnAdd.style.display    = esProd ? "inline-block" : "none";
   btnAdd.style.background = accent;
@@ -2292,7 +2326,8 @@ function render() {
   }
 
   let result;
-  if      (state.tab === "proyeccion") result = renderProyeccion();
+  if      (state.tab === "resumen")    result = renderResumen();
+  else if (state.tab === "proyeccion") result = renderProyeccion();
   else if (state.tab === "fire")       result = renderFIRE();
   else if (state.tab === "asignacion") result = renderAsignacion();
   else if (state.tab === "diff")       result = renderDiff();
@@ -2848,6 +2883,139 @@ function renderKpisExtra(filasFull, ultima, tirAnual) {
         </div>`).join("")}
     </div>
   </div>`;
+}
+
+function renderResumen() {
+  const accent = "#FBBF24";
+  setAccentVars(accent);
+
+  const items = state.productos.map(p => {
+    const ents = (state.entradas[p.id] || []);
+    const filas = calcStats(ents);
+    const ult  = filas[filas.length - 1] || null;
+    const tir  = ents.length ? calcTIR(ents) : null;
+    return {
+      id:           p.id,
+      nombre:       p.nombre,
+      color:        p.color,
+      aportado:     ult ? ult.acumAportado : 0,
+      valor:        ult ? ult.valor        : 0,
+      ganancia:     ult ? ult.ganancia     : 0,
+      rentPct:      ult ? ult.rentPct      : 0,
+      tir:          tir,
+      tieneDatos:   !!ult,
+    };
+  });
+
+  const totalValor    = items.reduce((s, p) => s + p.valor,    0);
+  const totalAportado = items.reduce((s, p) => s + p.aportado, 0);
+  const totalGanancia = totalValor - totalAportado;
+  const totalRentPct  = totalAportado > 0 ? (totalGanancia / totalAportado) * 100 : 0;
+
+  // TIR global de la cartera
+  const filasTot = statsTotalCalc();
+  const tirTotal = filasTot.length
+    ? calcTIR(filasTot.map(f => ({ fecha: f.fecha, manual: f.manual, saveback: f.saveback, roundup: f.roundup, valor: f.valor })))
+    : null;
+
+  // Variación del valor total respecto al mes anterior
+  const ultTot   = filasTot[filasTot.length - 1] || null;
+  const prevTot  = filasTot.length > 1 ? filasTot[filasTot.length - 2] : null;
+  const varMes   = ultTot && prevTot ? ultTot.valor - prevTot.valor : null;
+  const varMesP  = varMes != null && prevTot.valor > 0 ? (varMes / prevTot.valor) * 100 : null;
+
+  // Añadir peso en cartera y ordenar por valor desc
+  const itemsConPeso = items
+    .map(p => ({ ...p, peso: totalValor > 0 ? (p.valor / totalValor) * 100 : 0 }))
+    .sort((a, b) => b.valor - a.valor);
+
+  let html = `
+    <div class="title-row">
+      <div>
+        <h2>RESUMEN DE PRODUCTOS</h2>
+        <div class="subtitle">Vista comparada · ${items.length} producto${items.length===1?"":"s"} · ordenados por valor</div>
+      </div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">VALOR TOTAL</div>
+        <div class="kpi-value" style="color:${accent}">${fmtE(totalValor)}</div>
+        <div class="kpi-sub">Aportado: ${fmtE(totalAportado)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">GANANCIA TOTAL</div>
+        <div class="kpi-value" style="color:${totalGanancia>=0?'var(--green)':'var(--red)'}">${fmtE(totalGanancia)}</div>
+        <div class="kpi-sub">${totalGanancia>=0?"+":""}${fmt(totalRentPct)}% sobre aportado</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">TIR ANUALIZADA</div>
+        <div class="kpi-value" style="color:${tirTotal!=null && tirTotal>=0?'var(--green)':tirTotal!=null?'var(--red)':'var(--mute)'}">${tirTotal!=null?fmt(tirTotal*100)+"%":"—"}</div>
+        <div class="kpi-sub">XIRR cartera completa</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">ESTE MES</div>
+        <div class="kpi-value" style="color:${varMes==null?'var(--mute)':varMes>=0?'var(--green)':'var(--red)'}">${varMes!=null?(varMes>=0?"+":"")+fmtE(varMes):"—"}</div>
+        <div class="kpi-sub">${varMesP!=null?(varMesP>=0?"+":"")+fmt(varMesP)+"% vs mes anterior":"Sin mes anterior"}</div>
+      </div>
+    </div>
+  `;
+
+  if (!items.length) {
+    html += `<div class="empty" style="margin-top:18px">
+      <div class="empty-title">SIN PRODUCTOS</div>
+      <div class="empty-sub">Crea un producto desde el menú lateral</div>
+    </div>`;
+    $("#main").innerHTML = html;
+    return;
+  }
+
+  html += `
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-title">DETALLE POR PRODUCTO</div>
+      <div class="asig-table resumen-table">
+        <div class="asig-row asig-head resumen-row">
+          <span>PRODUCTO</span>
+          <span>APORTADO</span>
+          <span>VALOR</span>
+          <span>GANANCIA</span>
+          <span>TIR</span>
+          <span>PESO</span>
+        </div>
+        ${itemsConPeso.map(p => {
+          const gCol = p.ganancia >= 0 ? "var(--green)" : "var(--red)";
+          const tirTxt = p.tir != null ? `${fmt(p.tir*100)}%` : "—";
+          const tirCol = p.tir == null ? "var(--mute)" : p.tir >= 0 ? "var(--green)" : "var(--red)";
+          return `
+            <div class="asig-row resumen-row resumen-clickable" data-resumen-prod="${esc(p.id)}" role="button" tabindex="0" title="Abrir ${esc(p.nombre)}">
+              <span data-l="PRODUCTO"><span class="asig-dot" style="background:${p.color}"></span>${esc(p.nombre)}</span>
+              <span data-l="APORTADO">${fmtE(p.aportado)}</span>
+              <span data-l="VALOR">${fmtE(p.valor)}</span>
+              <span data-l="GANANCIA"><span class="resumen-val" style="color:${gCol}">${fmtE(p.ganancia)}<span class="resumen-pct">${p.ganancia>=0?"+":""}${fmt(p.rentPct)}%</span></span></span>
+              <span data-l="TIR"><span class="resumen-val" style="color:${tirCol}">${tirTxt}</span></span>
+              <span data-l="PESO">${fmt(p.peso)}%</span>
+            </div>`;
+        }).join("")}
+        <div class="asig-row asig-total resumen-row">
+          <span data-l="PRODUCTO"><strong>TOTAL</strong></span>
+          <span data-l="APORTADO">${fmtE(totalAportado)}</span>
+          <span data-l="VALOR">${fmtE(totalValor)}</span>
+          <span data-l="GANANCIA"><span class="resumen-val" style="color:${totalGanancia>=0?'var(--green)':'var(--red)'}">${fmtE(totalGanancia)}<span class="resumen-pct">${totalGanancia>=0?"+":""}${fmt(totalRentPct)}%</span></span></span>
+          <span data-l="TIR"><span class="resumen-val" style="color:${tirTotal!=null && tirTotal>=0?'var(--green)':tirTotal!=null?'var(--red)':'var(--mute)'}">${tirTotal!=null?fmt(tirTotal*100)+"%":"—"}</span></span>
+          <span data-l="PESO">100%</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  $("#main").innerHTML = html;
+
+  // Cada fila lleva al tab del producto
+  $$('[data-resumen-prod]').forEach(el => {
+    const go = () => { state.tab = el.dataset.resumenProd; render(); };
+    el.onclick = go;
+    el.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
+  });
 }
 
 function renderProyeccion() {
@@ -4563,6 +4731,7 @@ function bindGlobals() {
     if (f) handleImportJSON(f);
     e.target.value = "";
   };
+  $("#btnResumen").onclick       = () => { state.tab = "resumen"; closeDrawer(); render(); };
   $("#btnProyeccion").onclick    = () => { state.tab = "proyeccion"; closeDrawer(); render(); };
   $("#btnObjetivos").onclick     = openObjetivosModal;
   $("#btnFire").onclick          = () => { state.tab = "fire"; closeDrawer(); render(); };

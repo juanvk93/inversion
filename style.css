@@ -1320,6 +1320,51 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 .asig-drift-ok    { color: var(--green); }
 .asig-drift-mid   { color: var(--yellow); }
 .asig-drift-high  { color: var(--red); }
+
+/* Vista · Resumen de productos (6 columnas en desktop) */
+.resumen-row { grid-template-columns: 1.6fr 1fr 1fr 1.2fr 0.9fr 0.7fr; }
+.resumen-clickable { cursor: pointer; transition: background .15s, border-color .15s; }
+.resumen-clickable:hover { background: var(--accent-soft); border-color: var(--accent-line); }
+.resumen-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.resumen-val { display: inline-flex; align-items: baseline; gap: 6px; }
+.resumen-pct { font-size: 10px; color: var(--mute); }
+
+@media (max-width: 768px) {
+  /* Móvil · cards en lista apilada: una columna, cada KPI en su propia fila.
+     Esto sobrescribe el grid 1fr 1fr por defecto de .asig-row en móvil. */
+  .resumen-row, .resumen-row.asig-total {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 14px 16px;
+  }
+  .resumen-row > span {
+    grid-column: 1 / -1;
+    padding: 9px 0;
+    font-size: 13px;
+  }
+  /* Cabecera de tarjeta · nombre del producto junto al dot, izquierda */
+  .resumen-row > span:first-child {
+    justify-content: flex-start !important;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    padding: 4px 0 12px;
+  }
+  .resumen-row > span:first-child .asig-dot {
+    width: 10px; height: 10px;
+    margin-right: 10px;
+    flex-shrink: 0;
+  }
+  /* Etiqueta (::before) a la izquierda; valor envuelto en .resumen-val a la derecha */
+  .resumen-row .resumen-val {
+    font-family: monospace;
+    white-space: nowrap;
+  }
+  .resumen-row .resumen-pct {
+    font-size: 11px;
+    color: var(--mute);
+  }
+}
 .asig-aporte      { font-weight: 600; }
 .asig-bar {
   grid-column: 1 / -1;

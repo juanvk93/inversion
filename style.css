@@ -1789,3 +1789,59 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   .fiscal-sim-toolbar { gap: 4px; }
   .fiscal-preset { flex: 1; padding: 8px 6px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v1.8 · REFINOS DE VISUAL MÓVIL
+   Legibilidad/espaciado · tablas-tarjeta · gráficos/heatmap.
+   Todo vive dentro de breakpoints de móvil → el escritorio (>768px) NO se altera.
+   Al ir después en el archivo, estos ajustes ganan a los anteriores en empates.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* ── Legibilidad / espaciado ── */
+  .subtitle    { font-size: 11px; line-height: 1.5; }
+  .kpi-label   { line-height: 1.35; }
+  .kpi-sub     { line-height: 1.4; }
+  .disclaimer  { font-size: 10px; line-height: 1.6; }
+
+  /* Filtro de periodo: pastillas en una fila con scroll horizontal si no caben
+     (antes podían desbordar el ancho del viewport en pantallas estrechas). */
+  .filter-row    { flex-wrap: nowrap; justify-content: flex-start; }
+  .filter-period { display: flex; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .filter-period::-webkit-scrollbar { display: none; }
+  .filter-period button { flex: 0 0 auto; padding: 8px 12px; min-height: 36px; }
+
+  /* ── Tablas como tarjetas: más aire, etiqueta legible, acciones táctiles ── */
+  .tr { padding: 16px 16px; border-radius: 14px; }
+  .tr > span, .tr > div { padding: 7px 0; gap: 12px; }
+  .tr > span:not(:first-child) { font-size: 13px; }
+  /* Etiqueta data-l con algo más de contraste y tamaño que el --darkest base */
+  .tr > span::before { color: var(--dimmer); font-size: 9.5px; letter-spacing: 1px; flex: 0 0 auto; }
+  .row-acts { gap: 8px; padding-top: 10px; }
+  .row-act  { flex: 1; min-height: 38px; display: flex; align-items: center; justify-content: center;
+              border: 1px solid var(--panel-b); border-radius: 9px; font-size: 12px; }
+
+  /* ── Gráficos / heatmap ── */
+  /* Un poco más de altura: las líneas respiran mejor en pantalla estrecha */
+  .chart-box       { height: 220px; }
+  .chart-box.short { height: 185px; }
+  /* Heatmap: celdas algo mayores y más legibles (mantiene el scroll horizontal) */
+  .heatmap-grid    { min-width: 520px; }
+  .heat-row        { grid-template-columns: 28px repeat(12, minmax(30px, 1fr)); gap: 3px; height: 30px; }
+  .heat-row.head span { font-size: 8px; }
+  .heat-cell       { height: 27px; font-size: 9px; }
+  .heat-year       { font-size: 10px; height: 30px; }
+  .heat-scale div  { width: 14px; }
+}
+
+/* ── Móviles pequeños (≤380px): compactar sin sacrificar legibilidad ── */
+@media (max-width: 380px) {
+  main             { padding: 16px 11px; padding-bottom: 90px; }
+  .title-row h2    { font-size: 22px; }
+  .panel           { padding: 14px 13px; }
+  .kpi             { padding: 12px 12px; }
+  .kpi-value       { font-size: 16px; }
+  /* Escenarios de proyección: de 3 columnas apretadas a etiqueta/valor en fila */
+  .scen-grid       { grid-template-columns: 1fr; gap: 6px; }
+  .scen-grid > div { display: flex; justify-content: space-between; align-items: baseline; }
+  .scen-grid .l    { margin-bottom: 0; }
+}

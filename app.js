@@ -137,7 +137,9 @@ const labelMes   = (ym)       => { const [y, m] = ym.split("-"); return `${MESES
 const hoy        = ()         => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; };
 const aportTotal = (e)        => (e.manual || 0) + (e.saveback || 0) + (e.roundup || 0);
 const esc        = (s)        => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-const RESERVED_IDS = new Set(["total", "proyeccion"]);
+// IDs reservados para las vistas internas: un producto importado no puede usarlos
+// (colisionaría con la pestaña/vista del mismo nombre y quedaría inaccesible).
+const RESERVED_IDS = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
 const sanitizeId = (s) => {
   let out = String(s ?? "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
   if (!out) out = `id_${Date.now()}`;
@@ -158,6 +160,7 @@ function debounce(fn, ms = 60) {
 
 const PBKDF2_ITER = 200_000;
 let _cryptoKey = null;   // CryptoKey activa en memoria (null = sin cifrado)
+let _locked    = false;  // true si la BD está cifrada y el usuario canceló el desbloqueo
 
 async function deriveKey(passphrase, salt) {
   const enc = new TextEncoder();
@@ -310,10 +313,13 @@ async function loadState() {
     if (encMeta?.enabled) {
       const ok = await promptUnlock(encMeta);
       if (!ok) {
-        // Usuario canceló: dejamos state vacío y avisamos
+        // Usuario canceló: bloqueamos la app para NO sobrescribir los datos
+        // cifrados con texto plano en un guardado posterior.
+        _locked = true;
         state.productos = [];
         state.entradas  = {};
         state.objetivos = [];
+        alert("Datos bloqueados. Recarga la página para introducir la passphrase.");
         return;
       }
     }
@@ -392,6 +398,9 @@ async function writeField(key, value) {
 // Cola de escritura: serializa los saveState para evitar carreras.
 let _saveQueue = Promise.resolve();
 function saveState() {
+  // En estado bloqueado (cifrado sin desbloquear) no escribimos: evitaría
+  // pisar los blobs cifrados con texto plano del estado vacío en memoria.
+  if (_locked) return _saveQueue;
   invalidateStatsCache();
   _saveQueue = _saveQueue
     .then(async () => {
@@ -645,7 +654,7 @@ function calcMejorMes(filas) {
     if (f.rentMes == null) continue;
     if (!best || f.rentMes > best.rentMes) best = { rentMes: f.rentMes, fecha: f.fecha };
   }
-  return best && best.rentMes > 0 ? best : best;   // devuelve incluso si es <=0 (mostrar "—" en UI si conviene)
+  return best;   // puede ser <= 0; la UI decide cómo mostrarlo
 }
 
 // Encuentra el mes peor. Análogo a calcMejorMes pero por mínimo.
@@ -941,24 +950,35 @@ function escCSV(v) {
   return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function parseCSVLine(linea) {
-  const out = [];
-  let cur = "", inQ = false;
-  for (let i = 0; i < linea.length; i++) {
-    const c = linea[i];
+// Parser CSV que respeta comillas y saltos de línea DENTRO de campos
+// entrecomillados. Devuelve un array de registros; cada registro un array de
+// campos. Imprescindible para round-trip de notas multilínea (la versión por
+// línea las rompía al hacer split("\n") antes de parsear). El texto debe venir
+// ya normalizado a LF.
+function parseCSVRecords(texto) {
+  const records = [];
+  let row = [], field = "", inQ = false;
+  const endField = () => { row.push(field); field = ""; };
+  const endRow   = () => { endField(); records.push(row); row = []; };
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
     if (inQ) {
       if (c === '"') {
-        if (linea[i+1] === '"') { cur += '"'; i++; }
+        if (texto[i+1] === '"') { field += '"'; i++; }
         else inQ = false;
-      } else cur += c;
+      } else field += c;
+    } else if (c === '"') {
+      inQ = true;
+    } else if (c === ",") {
+      endField();
+    } else if (c === "\n") {
+      endRow();
     } else {
-      if (c === '"') inQ = true;
-      else if (c === ",") { out.push(cur); cur = ""; }
-      else cur += c;
+      field += c;
     }
   }
-  out.push(cur);
-  return out;
+  if (field !== "" || row.length) endRow();
+  return records.filter(r => r.some(f => f.trim() !== ""));   // descartar filas vacías
 }
 
 function generarCSV() {
@@ -1006,9 +1026,9 @@ function exportarCSV() {
 }
 
 function importarCSV(texto) {
-  const lineas = texto.replace(/\r\n?/g, "\n").split("\n").filter(l => l.trim());
-  if (!lineas.length) return null;
-  const cab = parseCSVLine(lineas[0]).map(h => h.trim().toLowerCase());
+  const records = parseCSVRecords(texto.replace(/\r\n?/g, "\n"));
+  if (!records.length) return null;
+  const cab = records[0].map(h => h.trim().toLowerCase());
   const idx = (n) => cab.indexOf(n);
   const iPid = idx("producto_id"), iPnom = idx("producto_nombre"), iF = idx("fecha"),
         iM   = idx("manual"),      iS    = idx("saveback"),        iR = idx("roundup"),
@@ -1023,8 +1043,8 @@ function importarCSV(texto) {
 
   const prodMap = {};
   const ents = {};
-  for (let i = 1; i < lineas.length; i++) {
-    const c = parseCSVLine(lineas[i]);
+  for (let i = 1; i < records.length; i++) {
+    const c = records[i];
     if (!c[iPid] && !c[iPnom]) continue;
     const rawPid = (c[iPid] || `prod_${c[iPnom] || ""}`).trim();
     const pid    = sanitizeId(rawPid);   // bloquea caracteres peligrosos en IDs
@@ -1341,17 +1361,17 @@ function handleImportJSON(file) {
 const clone = (obj) => (typeof structuredClone === "function") ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
 
 async function crearSnapshot() {
+  if (_locked) { alert("Datos bloqueados. Recarga e introduce la passphrase."); return; }
   // Esperar a que se hayan persistido todas las escrituras pendientes antes de
   // clonar el estado, evitando capturar una versión obsoleta.
   await awaitSave();
   const fecha = new Date();
   const iso   = fecha.toISOString();
-  const snap  = {
-    id:        fecha.getTime(),
-    fecha:     iso,
-    productos: clone(state.productos),
-    entradas:  clone(state.entradas),
-  };
+  // Si el cifrado está activo, el snapshot guarda el payload cifrado (igual que
+  // el resto del estado en el KV) en lugar de productos/entradas en claro.
+  const snap = _cryptoKey
+    ? { id: fecha.getTime(), fecha: iso, enc: await encryptValue({ productos: state.productos, entradas: state.entradas }, _cryptoKey) }
+    : { id: fecha.getTime(), fecha: iso, productos: clone(state.productos), entradas: clone(state.entradas) };
   try {
     await dbPut(DB_SNAP, snap);
     state.lastSnapshot = iso;
@@ -1374,15 +1394,53 @@ async function crearSnapshot() {
 async function listarSnapshots() {
   try {
     const all = await dbAll(DB_SNAP);
-    return all.sort((a, b) => b.id - a.id);   // más recientes primero
+    all.sort((a, b) => b.id - a.id);   // más recientes primero
+    return await Promise.all(all.map(decodeSnapshot));   // descifra los cifrados
   } catch {
     return [];
   }
 }
 
+// Devuelve el snapshot con productos/entradas en claro (descifra si procede).
+// Si está cifrado y no hay clave activa, devuelve listas vacías (no debería
+// ocurrir: la clave está en memoria durante toda la sesión desbloqueada).
+async function decodeSnapshot(snap) {
+  if (!snap || !snap.enc) return snap;
+  if (!_cryptoKey) return { ...snap, productos: [], entradas: {} };
+  try {
+    const payload = await decryptValue(snap.enc, _cryptoKey);
+    return { ...snap, productos: payload.productos || [], entradas: payload.entradas || {} };
+  } catch {
+    return { ...snap, productos: [], entradas: {} };
+  }
+}
+
+// Re-cifra (o descifra) todos los snapshots al cambiar el estado de cifrado.
+// oldKey: clave con la que están cifrados (null si están en claro).
+// newKey: clave de destino (null para dejarlos en claro).
+async function reencryptSnapshots(oldKey, newKey) {
+  let snaps;
+  try { snaps = await dbAll(DB_SNAP); } catch { return; }
+  for (const s of snaps) {
+    let payload;
+    if (s.enc) {
+      if (!oldKey) continue;
+      try { payload = await decryptValue(s.enc, oldKey); } catch { continue; }
+    } else {
+      payload = { productos: s.productos || [], entradas: s.entradas || {} };
+    }
+    const base = { productos: payload.productos || [], entradas: payload.entradas || {} };
+    const next = newKey
+      ? { id: s.id, fecha: s.fecha, enc: await encryptValue(base, newKey) }
+      : { id: s.id, fecha: s.fecha, ...base };
+    await dbPut(DB_SNAP, next);
+  }
+}
+
 async function restaurarSnapshot(id) {
-  const snap = await dbGet(DB_SNAP, id);
-  if (!snap) return;
+  const raw = await dbGet(DB_SNAP, id);
+  if (!raw) return;
+  const snap = await decodeSnapshot(raw);
   const cuando = formatSnapDate(snap.fecha);
   if (!confirm(`¿Restaurar el punto del ${cuando}?\n\nLos datos actuales se reemplazarán por completo.`)) return;
   state.productos = clone(snap.productos);
@@ -1497,7 +1555,9 @@ function getProductPriceSync(prod) {
 async function fetchCoinGeckoPrice(id) {
   if (!id) return null;
   const cached = priceCache[id];
-  if (cached && Date.now() - cached.ts < COINGECKO_TTL) return cached;
+  // Respeta el TTL incluso para entradas de error (negative-cache): un id
+  // inválido no debe reintentar en cada render.
+  if (cached && Date.now() - cached.ts < COINGECKO_TTL) return Number.isFinite(cached.eur) ? cached : null;
   if (priceFetching[id]) return priceFetching[id];
   priceFetching[id] = (async () => {
     try {
@@ -1511,6 +1571,7 @@ async function fetchCoinGeckoPrice(id) {
       return priceCache[id];
     } catch (err) {
       console.warn("[Cartera] CoinGecko falló para", id, err);
+      priceCache[id] = { error: err?.message || "error", ts: Date.now() };   // negative-cache
       return null;
     } finally {
       delete priceFetching[id];
@@ -1652,7 +1713,9 @@ async function refreshAllPricesAsync() {
   const etfIds = etfHabilitado
     ? state.productos
         .map(p => p.etfTicker)
-        .filter(id => id && (!provider.cache[id]?.eur || Date.now() - provider.cache[id].ts >= ttl))
+        // Respetamos el TTL también para entradas con error (negative-cache):
+        // sin esto, un ticker inválido reintentaba en cada render y agotaba la cuota.
+        .filter(id => { const c = provider.cache[id]; return id && (!c || Date.now() - c.ts >= ttl); })
     : [];
   if (!cgIds.length && !etfIds.length) return;
 
@@ -4144,9 +4207,11 @@ function recalcMETotal() {
 }
 
 function saveEntry() {
+  const fecha = ($("#meFecha").value || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(fecha)) { alert("Selecciona un mes válido para la entrada."); return; }
   const e = {
     id:       state.editEntradaId || Date.now(),
-    fecha:    $("#meFecha").value,
+    fecha,
     manual:   parseFloat($("#meManual").value)   || 0,
     saveback: parseFloat($("#meSaveback").value) || 0,
     roundup:  parseFloat($("#meRoundup").value)  || 0,
@@ -4155,7 +4220,14 @@ function saveEntry() {
   };
   const pid   = state.tab;
   const lista = state.entradas[pid] || [];
-  const base  = state.editEntradaId ? lista.filter(x => x.id !== state.editEntradaId) : lista;
+  let base    = state.editEntradaId ? lista.filter(x => x.id !== state.editEntradaId) : lista;
+  // Evitar dos entradas del mismo mes (rompe el cálculo total y el heatmap, que
+  // indexan por fecha). Si ya existe, ofrecemos reemplazarla.
+  const dup = base.find(x => x.fecha === e.fecha);
+  if (dup) {
+    if (!confirm(`Ya existe una entrada para ${labelMes(e.fecha)}. ¿Reemplazarla?`)) return;
+    base = base.filter(x => x.id !== dup.id);
+  }
   state.entradas[pid] = [...base, e].sort((a,b) => a.fecha.localeCompare(b.fecha));
   saveState();
   $("#modalEntrada").classList.remove("open");
@@ -4452,6 +4524,7 @@ async function enableEncryption() {
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
+    await reencryptSnapshots(null, _cryptoKey);   // cifrar snapshots existentes
     renderSegBody();
     flash();
     alert("✓ Cifrado activado. La próxima vez que abras la app se te pedirá la passphrase.");
@@ -4465,7 +4538,9 @@ async function disableEncryption() {
   if (!confirm("¿Desactivar cifrado?\n\nLos datos volverán a guardarse en claro.")) return;
   try {
     await awaitSave();
+    const oldKey = _cryptoKey;
     _cryptoKey = null;
+    await reencryptSnapshots(oldKey, null);   // descifrar snapshots existentes
     await dbDelete(DB_KV, "encMeta");
     // Re-escribir todo el estado sin cifrar
     await dbPut(DB_KV, state.productos, "productos");
@@ -4512,6 +4587,7 @@ async function changePassphrase() {
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
+    await reencryptSnapshots(key, _cryptoKey);   // re-cifrar snapshots con la nueva clave
     renderSegBody();
     flash();
     alert("✓ Passphrase cambiada.");

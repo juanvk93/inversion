@@ -3,7 +3,7 @@
    - Pre-caché de assets locales en install
    - CDN externos (Chart.js, Google Fonts) se cachean bajo demanda */
 
-const CACHE = "cartera-v61";
+const CACHE = "cartera-v62";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,6 +12,15 @@ const ASSETS = [
   "./manifest.json",
   "./icon.svg",
 ];
+
+// Hosts externos cuyos assets SÍ queremos cachear para uso offline (CDN/fuentes).
+// El resto de orígenes (APIs de precios) NO se interceptan: van siempre a red,
+// evitando servir cotizaciones obsoletas y almacenar URLs con API key en caché.
+const CACHEABLE_HOSTS = new Set([
+  "cdn.jsdelivr.net",
+  "fonts.googleapis.com",
+  "fonts.gstatic.com",
+]);
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -31,6 +40,14 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
+
+  // Solo cacheamos assets propios (mismo origen) y los CDN/fuentes conocidos.
+  // Las llamadas a APIs de precios (CoinGecko, Twelve Data, Yahoo, proxies CORS)
+  // se dejan pasar a la red sin interceptar: así no se sirven precios obsoletos
+  // desde caché ni se almacena la URL con la API key.
+  const url = new URL(req.url);
+  const cacheable = url.origin === self.location.origin || CACHEABLE_HOSTS.has(url.hostname);
+  if (!cacheable) return;
 
   e.respondWith(
     caches.match(req).then(cached => {

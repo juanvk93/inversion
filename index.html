@@ -2,6 +2,10 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<!-- Content-Security-Policy: defensa en profundidad contra XSS. script-src no
+     permite 'unsafe-inline' → un script o handler inyectado no se ejecutaría.
+     connect-src enumera exactamente las APIs de precios y proxies usados. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://api.coingecko.com https://api.twelvedata.com https://query1.finance.yahoo.com https://api.allorigins.win https://api.codetabs.com https://corsproxy.io https://thingproxy.freeboard.io https://cors-proxy.htmldriven.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'">
 <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#080C12">
 <meta name="description" content="Seguimiento personal de cartera de inversiones">
@@ -289,6 +293,23 @@
 
     <!-- Entradas del changelog -->
     <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.8</span>
+          <span class="cl-ver-date">Junio 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Seguridad · Service Worker</strong>: ya no se cachean las llamadas a las APIs de precios (CoinGecko, Twelve Data, Yahoo y proxies). Antes se servían cotizaciones obsoletas desde caché y se almacenaba en <code>Cache Storage</code> la URL con la API key de Twelve Data. Ahora solo se cachean los assets propios y los CDN/fuentes.</li>
+          <li><strong>Content-Security-Policy</strong>: añadida cabecera CSP (defensa en profundidad). <code>script-src</code> sin <code>'unsafe-inline'</code> impide ejecutar scripts o handlers inyectados; <code>connect-src</code> limita las conexiones a las APIs de precios usadas.</li>
+          <li><strong>Cifrado de snapshots</strong>: los puntos de restauración ahora se cifran con AES-256 cuando el cifrado está activo (antes quedaban en texto plano). Activar/desactivar cifrado y cambiar la passphrase re-cifran también los snapshots existentes.</li>
+          <li><strong>Bloqueo seguro</strong>: si se cancela el desbloqueo de una BD cifrada, la app queda en modo solo-lectura y no sobrescribe los datos cifrados con texto plano.</li>
+          <li><strong>Fix import CSV</strong>: el parser respeta comillas y saltos de línea dentro de campos, por lo que las notas multilínea sobreviven al round-trip exportar→importar.</li>
+          <li><strong>Fix entradas duplicadas</strong>: al guardar una entrada de un mes que ya existe se ofrece reemplazarla, evitando dos entradas del mismo mes (que rompían el cálculo total y el heatmap).</li>
+          <li><strong>IDs reservados</strong>: un producto importado ya no puede usar un id de vista interna (<code>total</code>, <code>fire</code>, <code>fiscal</code>, <code>config</code>…) que lo dejaría inaccesible.</li>
+          <li><strong>Menos peticiones</strong>: negative-cache para precios — un ticker o id inválido ya no reintenta la API en cada render.</li>
+        </ul>
+      </div>
 
       <div class="cl-version">
         <div class="cl-ver-head">

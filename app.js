@@ -1874,6 +1874,54 @@ function drawChartValor(filas, accent) {
   // Anotaciones: puntos destacados donde hay nota
   const notas = filas.map(f => f.nota ? f.valor : null);
   const tieneNotas = notas.some(v => v != null);
+  const last = filas.length - 1;
+  // Relleno entre "valor real" y "aportado": verde = plusvalía, rojo = pérdida
+  const GAN_FILL = "rgba(52,211,153,0.18)";
+  const PER_FILL = "rgba(248,113,113,0.16)";
+  // Plugin inline: badge con el valor actual junto al último punto del "Valor real".
+  // Se ancla a la IZQUIERDA del dot y se confina al área de trazado para no
+  // solaparse con la leyenda (arriba) ni cortarse en los bordes.
+  const lastValLabel = {
+    id: "lastValLabel",
+    afterDatasetsDraw(chart) {
+      const pt  = chart.getDatasetMeta(1)?.data?.[last]; // dataset 1 = "Valor real"
+      const val = filas[last]?.valor;
+      if (!pt || val == null) return;
+      const area = chart.chartArea;
+      const c = chart.ctx;
+      const txt = fmtE(val);
+      c.save();
+      c.font = "700 12px monospace";
+      const padX = 7, h = 19;
+      const w = c.measureText(txt).width + padX * 2;
+      let bx = pt.x - 9 - w;                                  // a la izquierda del dot
+      if (bx < area.left + 2) bx = Math.min(pt.x + 9, area.right - w - 2);
+      let by = pt.y - h / 2;                                  // centrado a la altura del dot
+      by = Math.max(area.top + 2, Math.min(by, area.bottom - h - 2)); // clamp vertical
+      c.beginPath();
+      if (typeof c.roundRect === "function") c.roundRect(bx, by, w, h, 5);
+      else c.rect(bx, by, w, h);
+      c.fillStyle = "rgba(8,12,18,0.82)";
+      c.fill();
+      c.lineWidth = 1;
+      c.strokeStyle = accent + "66";
+      c.stroke();
+      c.fillStyle = accent;
+      c.textAlign = "left";
+      c.textBaseline = "middle";
+      c.fillText(txt, bx + padX, by + h / 2 + 0.5);
+      c.restore();
+    }
+  };
+  // Añade aire debajo de la leyenda para que no quede pegada al área de trazado.
+  const legendMargin = {
+    id: "legendMargin",
+    beforeInit(chart) {
+      if (!chart.legend) return;
+      const orig = chart.legend.fit;
+      chart.legend.fit = function () { orig.call(this); this.height += 12; };
+    }
+  };
   charts.valor = new Chart(ctx, {
     type: "line",
     data: {
@@ -1883,15 +1931,18 @@ function drawChartValor(filas, accent) {
           label: "Aportado",
           data: filas.map(f => f.acumAportado),
           borderColor: "#4B5563", borderWidth: 1.5, borderDash: [4, 3],
-          backgroundColor: (c) => c.chart.chartArea ? makeGradient(c.chart.ctx, "#4B5563", c.chart.chartArea, 0.15) : "transparent",
+          backgroundColor: (c) => c.chart.chartArea ? makeGradient(c.chart.ctx, "#4B5563", c.chart.chartArea, 0.12) : "transparent",
           tension: 0.3, fill: true, pointRadius: 0,
         },
         {
           label: "Valor real",
           data: filas.map(f => f.valor),
           borderColor: accent, borderWidth: 2,
-          backgroundColor: (c) => c.chart.chartArea ? makeGradient(c.chart.ctx, accent, c.chart.chartArea, 0.20) : "transparent",
-          tension: 0.3, fill: true, pointRadius: 0,
+          // Relleno hacia "Aportado" (dataset anterior): verde si hay ganancia, rojo si pérdida
+          fill: { target: "-1", above: GAN_FILL, below: PER_FILL },
+          tension: 0.3,
+          pointRadius: filas.map((f, i) => i === last ? 4 : 0),
+          pointBackgroundColor: accent, pointBorderColor: accent,
           pointHoverRadius: filas.map(f => f.nota ? 0 : 4),
         },
         ...(tieneNotas ? [{
@@ -1911,7 +1962,8 @@ function drawChartValor(filas, accent) {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
-        legend: { display: false },
+        legend: { display: true, position: "top", align: "start",
+          labels: { color: "#9CA3AF", font: { family: "monospace", size: 10 }, boxWidth: 12, padding: 8, filter: it => it.text !== "Notas" } },
         tooltip: { ...TOOLTIP_BASE, displayColors: true,
           callbacks: {
             label: (c) => c.dataset.label === "Notas" ? "" : ` ${c.dataset.label}: ${fmtE(c.parsed.y)}`,
@@ -1924,7 +1976,8 @@ function drawChartValor(filas, accent) {
         }
       },
       scales: gridConfig(fmtTickEUR),
-    }
+    },
+    plugins: [lastValLabel, legendMargin],
   });
 }
 
@@ -1960,6 +2013,12 @@ function drawChartMonteCarlo(labels, percs, aportado) {
 function drawChartRent(filas, accent) {
   const ctx = $("#chartRent")?.getContext("2d");
   if (!ctx) return;
+  // Relleno respecto a 0%: verde en ganancia, rojo en pérdida
+  const GAN_FILL = "rgba(52,211,153,0.16)";
+  const PER_FILL = "rgba(248,113,113,0.15)";
+  // Escala Y con la línea base de 0% resaltada respecto al resto del grid
+  const sc = gridConfig(v => `${v.toFixed(0)}%`);
+  sc.y.grid.color = (c) => c.tick.value === 0 ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.04)";
   charts.rent = new Chart(ctx, {
     type: "line",
     data: {
@@ -1967,7 +2026,8 @@ function drawChartRent(filas, accent) {
       datasets: [{
         label: "Rent. acumulada",
         data: filas.map(f => f.rentPct),
-        borderColor: accent, borderWidth: 2, tension: 0.3, fill: false,
+        borderColor: accent, borderWidth: 2, tension: 0.3,
+        fill: { target: { value: 0 }, above: GAN_FILL, below: PER_FILL },
         pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: accent,
       }],
     },
@@ -1979,7 +2039,7 @@ function drawChartRent(filas, accent) {
           callbacks: { label: (ctx) => { const v = ctx.parsed.y; return ` ${v>=0?"+":""}${fmt(v)}%`; } }
         }
       },
-      scales: gridConfig(v => `${v.toFixed(0)}%`),
+      scales: sc,
     }
   });
 }
@@ -2083,19 +2143,26 @@ function drawChartPeso(data) {
   const ctx = $("#chartPeso")?.getContext("2d");
   if (!ctx) return;
 
-  const total    = data.reduce((s, d) => s + d.valor, 0);
   const cs        = getComputedStyle(document.documentElement);
   const textColor = (cs.getPropertyValue("--text")   || "").trim() || "#E2E8F0";
   const dimColor  = (cs.getPropertyValue("--dimmer") || "").trim() || "#6B7280";
-  const totalFmt  = new Intl.NumberFormat("es-ES",
-    { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(total);
+  const nf        = new Intl.NumberFormat("es-ES",
+    { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 
   // Plugin local (solo este chart): rótulo "TOTAL" + importe en el hueco del donut.
+  // El total se recalcula con los productos VISIBLES en cada redibujado, de modo
+  // que al ocultar uno desde la leyenda el importe del centro se actualiza.
   const centerText = {
     id: "pesoCenterText",
     afterDraw(chart) {
       const arc = chart.getDatasetMeta(0).data[0];
       if (!arc) return;
+      const valores = chart.data.datasets[0].data;
+      let total = 0;
+      for (let i = 0; i < valores.length; i++) {
+        if (chart.getDataVisibility(i)) total += valores[i] || 0;
+      }
+      const totalFmt = nf.format(total);
       const c  = chart.ctx;
       const cx = arc.x, cy = arc.y;
       const innerD = arc.innerRadius * 1.8;   // ancho útil dentro del agujero
@@ -2149,7 +2216,9 @@ function drawChartPeso(data) {
         tooltip: { ...TOOLTIP_BASE, displayColors: true,
           callbacks: {
             label: (ctx) => {
-              const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
+              // % sobre el total VISIBLE, coherente con el importe del centro
+              let total = 0;
+              ctx.dataset.data.forEach((v, i) => { if (ctx.chart.getDataVisibility(i)) total += v || 0; });
               const pct = total > 0 ? (ctx.parsed / total * 100).toFixed(1) : 0;
               return ` ${ctx.label}: ${fmtE(ctx.parsed)} (${pct}%)`;
             }
@@ -2753,7 +2822,7 @@ function renderTabActual() {
 
   html += `<div class="panel">
     <div class="panel-title">VALOR REAL vs APORTADO</div>
-    ${sparseFilter ? emptyChart : `<div class="chart-box"><canvas id="chartValor"></canvas></div>`}
+    ${sparseFilter ? emptyChart : `<div class="chart-box has-legend"><canvas id="chartValor"></canvas></div>`}
   </div>`;
 
   html += `<div class="panel">

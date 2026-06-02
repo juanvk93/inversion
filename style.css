@@ -517,6 +517,8 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
   font-family: monospace; margin-bottom: 16px;
 }
 .chart-box { position: relative; height: 200px; }
+/* Gráficos con leyenda nativa arriba: acerca la leyenda al título del panel */
+.chart-box.has-legend { margin-top: -6px; }
 .chart-box.short { height: 170px; }
 .chart-box.tall  { height: 260px; }
 
@@ -872,14 +874,49 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
     padding: 0 14px;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: center;   /* centra "MI CARTERA" en la fila 1 */
+    position: relative;
+    /* Sin backdrop-filter en móvil: si no, el header crea un containing block
+       que atrapa el position:fixed de la hamburguesa (la dejaba arriba en vez
+       de abajo). El fondo es 92% opaco, así que el blur era imperceptible. */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
+
+  /* La hamburguesa pasa a ser un botón flotante (FAB), igual que "+ ENTRADA".
+     Abajo-izquierda, simétrica al FAB de entrada (abajo-derecha). El drawer
+     abre desde la izquierda, así que el lado izquierdo es el natural. */
+  .btn-hamburger {
+    position: fixed;
+    left: 18px;
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: rgba(13,17,23,0.92);
+    -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+    gap: 5px;
+    z-index: 36;   /* por encima del contenido; por debajo del drawer (40/41) */
+  }
+  .btn-hamburger span { width: 18px; height: 2px; }
+  .btn-hamburger:active { transform: scale(0.92); }
+  :root.light .btn-hamburger {
+    background: rgba(255,255,255,0.95);
+    border-color: var(--panel-b);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  }
+
+  /* "MI CARTERA" centrado: único elemento en flujo de la fila 1
+     (hamburguesa fixed y .actions absolute quedan fuera del flujo). */
   .brand {
-    padding-right: 0; margin-right: auto;
+    padding: 0; margin: 0;
     border-right: none;
   }
-  .brand h1 { font-size: 15px; letter-spacing: 2px; }
+  .brand h1 { font-size: 16px; letter-spacing: 2.5px; padding: 13px 0; }
 
-  /* Tabs pasan a una segunda fila, ancho completo y scroll horizontal visible.
+  /* Tabs en segunda fila como chips/pastillas desplazables horizontalmente.
      Sin margin negativo: causaba overflow horizontal y dejaba el documento más
      ancho que el viewport tras pinch-zoom. */
   .tabs {
@@ -887,26 +924,51 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
     flex-basis: 100%;
     width: 100%;
     border-top: 1px solid var(--panel-b);
-    gap: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
     /* Indicador de scroll: degradado en el borde derecho */
     -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
             mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
   }
-  .tab { padding: 12px 14px; font-size: 10px; }
-  .tab-total { margin-right: 6px; padding-left: 14px; padding-right: 18px; }
-  .tab-total::after { left: 14px; right: 18px; }
+  .tab {
+    padding: 8px 15px;
+    font-size: 11px;
+    border: 1px solid var(--panel-b);
+    border-radius: 999px;
+    background: var(--panel);
+    opacity: 0.72;
+    transition: opacity .15s, background .15s, border-color .15s;
+  }
+  .tab.active {
+    opacity: 1;
+    border-color: var(--accent);
+    border-bottom-color: var(--accent);
+    /* relleno con el color del producto (var(--accent) viene inline en el activo) */
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  /* En modo chip neutralizamos el separador y el subrayado especiales del Total */
+  .tab-total {
+    margin-right: 8px;
+    padding-left: 15px; padding-right: 15px;
+    box-shadow: none;
+  }
+  .tab-total::after { display: none; }
+  .tab-total.active { border-bottom-color: var(--accent); }
 
   .actions {
-    padding-left: 10px;
-    padding-right: 0;
-    gap: 6px;
+    position: absolute;
+    right: 14px; top: 11px;
+    padding: 0; gap: 6px;
     border-left: none;
-    margin-left: auto;
   }
   .btn-primary {
     padding: 6px 12px; font-size: 11px;
   }
   .saved { display: none !important; } /* el toast confirma en móvil */
+
+  /* En móvil no hay teclado físico: ocultamos la sección de atajos del drawer */
+  .drawer-section-kbd { display: none; }
 
   /* En móvil usamos el FAB flotante; ocultamos el "+ ENTRADA" del header */
   #btnAddEntry { display: none !important; }

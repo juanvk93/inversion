@@ -26,9 +26,9 @@
 }
 
 :root.light {
-  --bg:      #ECECEC;
-  --panel:   #FFFFFF;
-  --panel-b: #D1D5DB;
+  --bg:      #D8DDE5;
+  --panel:   #EEF1F6;
+  --panel-b: #BFC7D2;
   --text:    #1F2937;
   --mute:    #374151;
   --dim:     #4B5563;
@@ -426,6 +426,13 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
 .kpi-label { font-size: 9px; letter-spacing: 2px; color: var(--darkest); font-family: monospace; margin-bottom: 8px; }
 .kpi-value { font-size: 20px; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; line-height: 1; }
 .kpi-sub { font-size: 11px; color: var(--dimmest); font-family: monospace; margin-top: 6px; }
+/* Panel de dividendos */
+.div-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.div-stat { display: flex; flex-direction: column; }
+.ds-l { font-size: 9px; letter-spacing: 2px; color: var(--darkest); font-family: monospace; margin-bottom: 8px; }
+.ds-v { font-size: 22px; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; line-height: 1; color: var(--text); }
+.ds-s { font-size: 10px; color: var(--dimmest); font-family: monospace; margin-top: 6px; }
+@media (max-width: 768px) { .div-stats { grid-template-columns: 1fr 1fr; gap: 14px; } }
 .kpi-info {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center;
@@ -646,7 +653,7 @@ main { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
   background: rgba(167,139,250,0.05);
   border: 1px solid rgba(167,139,250,0.12);
   border-radius: 16px; padding: 20px 24px; margin-bottom: 20px;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 28px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px;
 }
 .proy-controls .label-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
 .proy-controls .label-row label {
@@ -680,6 +687,7 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 .scen-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .scen-label { font-size: 9px; letter-spacing: 2px; color: var(--dimmest); font-family: monospace; margin-bottom: 6px; }
 .scen-value { font-size: 30px; font-family: 'Bebas Neue', sans-serif; letter-spacing: 1px; line-height: 1; }
+.scen-real-eur { font-size: 10px; font-family: monospace; color: var(--dimmer); margin-top: 6px; letter-spacing: 0.5px; }
 .scen-tag { font-family: monospace; font-size: 10px; padding: 4px 10px; border-radius: 50px; }
 .scen-cons .scen-value, .scen-cons .scen-tag { color: var(--green); }
 .scen-cons .scen-tag  { background: #6EE7B715; border: 1px solid #6EE7B725; }
@@ -807,9 +815,12 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   margin-top: 4px; text-align: center; letter-spacing: 1px;
 }
 .total-line { font-size: 10px; font-family: monospace; margin-top: 10px; text-align: right; color: var(--accent); }
-.colors { display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap; }
+.colors {
+  display: grid; grid-template-columns: repeat(9, 1fr);
+  gap: 9px; margin-top: 4px; justify-items: center;
+}
 .color-btn {
-  width: 26px; height: 26px; border-radius: 50%;
+  width: 100%; max-width: 26px; aspect-ratio: 1 / 1; border-radius: 50%;
   border: 2px solid transparent; cursor: pointer;
   transition: transform .15s;
 }
@@ -1072,6 +1083,22 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   background: var(--panel); border: 1px solid var(--panel-b);
   border-radius: 14px; padding: 20px 24px; margin-bottom: 20px;
 }
+.fire-controls .fire-infl-ctrl { grid-column: 1 / -1; }
+.fire-controls .label-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
+.fire-controls .label-row label { font-size: 9px; font-family: monospace; color: var(--dimmer); letter-spacing: 2px; }
+.fire-controls .label-row .val { font-size: 14px; font-family: 'Bebas Neue', sans-serif; color: var(--accent); letter-spacing: 1px; }
+
+/* ── Vista Benchmark ─────────────────────────────────────────────────────── */
+.bench-sel-panel { display: flex; flex-direction: column; gap: 12px; }
+.bench-sel-label { font-size: 9px; font-family: monospace; color: var(--dimmer); letter-spacing: 2px; }
+.bench-sel-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.bench-chip {
+  background: rgba(255,255,255,0.03); border: 1px solid var(--panel-b);
+  color: var(--mute); cursor: pointer; padding: 8px 16px; border-radius: 50px;
+  font-family: monospace; font-size: 11px; letter-spacing: 0.5px; transition: all .15s;
+}
+.bench-chip:hover { color: var(--text); border-color: var(--dim); }
+.bench-chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .fire-reglas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px; }
 .fire-reglas button {
   background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
@@ -1151,8 +1178,8 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 /* ── Ajustes adicionales para tema claro ────────────────────────────────── */
 :root.light body, :root.light html { background: var(--bg); color: var(--text); }
 :root.light .panel { box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-:root.light .modal { background: #FFFFFF; box-shadow: 0 12px 40px rgba(0,0,0,0.18); }
-:root.light .drawer { background: #FFFFFF; box-shadow: 4px 0 24px rgba(0,0,0,0.06); }
+:root.light .modal { background: #F4F7FA; box-shadow: 0 12px 40px rgba(0,0,0,0.18); }
+:root.light .drawer { background: #F4F7FA; box-shadow: 4px 0 24px rgba(0,0,0,0.06); }
 :root.light .drawer-overlay { background: rgba(0,0,0,0.35); backdrop-filter: blur(2px); }
 :root.light .bg-glow { opacity: 0.4; }
 :root.light .modal-bg { background: rgba(60,60,60,0.5); }
@@ -1164,7 +1191,7 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 }
 :root.light .tab.active { color: var(--accent); }
 :root.light header {
-  background: rgba(255,255,255,0.92);
+  background: rgba(238,241,246,0.92);
   border-bottom-color: var(--panel-b);
 }
 :root.light .btn-hamburger { border-color: var(--panel-b); }
@@ -1224,6 +1251,7 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 
 .field-row-2 { grid-template-columns: 1fr 1fr !important; }
 .lbl-hint { color: var(--darkest); font-size: 9px; font-weight: 400; letter-spacing: 1px; }
+.lbl-req { color: var(--red); font-weight: 700; font-size: 12px; margin-left: 2px; }
 .field-hint {
   margin-top: 6px;
   font-size: 10px;

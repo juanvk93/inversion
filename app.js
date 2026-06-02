@@ -26,7 +26,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const MESES   = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-const COLORES = ["#60A5FA","#F97316","#A78BFA","#6EE7B7","#F472B6","#FBBF24","#34D399","#FB7185"];
+const COLORES = [
+  "#60A5FA","#818CF8","#A78BFA","#C084FC","#F472B6","#FB7185","#F87171","#FB923C","#F97316",
+  "#FBBF24","#FACC15","#A3E635","#4ADE80","#34D399","#6EE7B7","#2DD4BF","#22D3EE","#38BDF8"
+];
 const TIPOLOGIAS = ["ETF", "Fondo Indexado", "Fondo de Inversión", "Criptomoneda", "Acción", "Bono", "Materia Prima", "Inmobiliario", "Cuenta Remunerada", "Otro"];
 const DIVISAS    = ["EUR", "USD", "GBP", "CHF", "JPY", "AUD", "CAD"];
 
@@ -74,6 +77,17 @@ const YAHOO_TTL = 10 * 60 * 1000;   // 10 min
 // Proveedores de precio ETF soportados
 const ETF_PROVIDERS = ["twelvedata", "yahoo"];
 
+// Índices de referencia (benchmark). Se usan ETFs UCITS cotizados en EUR para que
+// la comparación sea limpia, sin ruido de tipo de cambio. Series vía Yahoo (mismo
+// chart endpoint y proxies que los precios spot, sin clave).
+const BENCHMARKS = [
+  { id: "EUNL.DE", nombre: "MSCI World",  desc: "iShares Core MSCI World (EUR)" },
+  { id: "SXR8.DE", nombre: "S&P 500",     desc: "iShares Core S&P 500 (EUR)" },
+  { id: "SXRV.DE", nombre: "Nasdaq 100",  desc: "iShares Nasdaq 100 (EUR)" },
+  { id: "IS3N.DE", nombre: "MSCI EM",     desc: "iShares Core MSCI EM IMI (EUR)" },
+];
+const BENCHMARK_TTL = 6 * 60 * 60 * 1000;   // 6 h (los cierres mensuales no cambian rápido)
+
 // Tramos IRPF 2026 (renta del ahorro, modelo D-100)
 const FISCAL_TRAMOS_2026 = [
   { hasta:    6000, tipo: 0.19 },
@@ -83,49 +97,9 @@ const FISCAL_TRAMOS_2026 = [
   { hasta: Infinity, tipo: 0.28 },
 ];
 
-const PRODUCTOS_INIT = [
-  { id: "etf", nombre: "MSCI World", referencia: "IE00B4L5Y983 · Acc · EUR", color: "#60A5FA" },
-  { id: "btc", nombre: "Bitcoin",    referencia: "BTC · Kraken · EUR",        color: "#F97316" },
-];
-
-const ENTRADAS_INIT = {
-  etf: [
-    { id: 1,  fecha: "2024-01", manual: 290, saveback: 10, roundup: 0, valor: 310,  nota: "" },
-    { id: 2,  fecha: "2024-02", manual: 280, saveback: 15, roundup: 5, valor: 640,  nota: "" },
-    { id: 3,  fecha: "2024-03", manual: 290, saveback: 8,  roundup: 2, valor: 980,  nota: "" },
-    { id: 4,  fecha: "2024-04", manual: 290, saveback: 7,  roundup: 3, valor: 1250, nota: "" },
-    { id: 5,  fecha: "2024-05", manual: 300, saveback: 15, roundup: 5, valor: 1600, nota: "Subida tech" },
-    { id: 6,  fecha: "2024-06", manual: 295, saveback: 12, roundup: 3, valor: 1870, nota: "" },
-    { id: 7,  fecha: "2024-07", manual: 285, saveback: 12, roundup: 3, valor: 2150, nota: "" },
-    { id: 8,  fecha: "2024-08", manual: 290, saveback: 8,  roundup: 2, valor: 2380, nota: "" },
-    { id: 9,  fecha: "2024-09", manual: 290, saveback: 7,  roundup: 3, valor: 2690, nota: "" },
-    { id: 10, fecha: "2024-10", manual: 310, saveback: 15, roundup: 5, valor: 3020, nota: "Aporte extra bonus" },
-    { id: 11, fecha: "2024-11", manual: 290, saveback: 8,  roundup: 2, valor: 3280, nota: "" },
-    { id: 12, fecha: "2024-12", manual: 290, saveback: 7,  roundup: 3, valor: 3540, nota: "" },
-    { id: 13, fecha: "2025-01", manual: 295, saveback: 12, roundup: 3, valor: 3820, nota: "" },
-    { id: 14, fecha: "2025-02", manual: 290, saveback: 7,  roundup: 3, valor: 4050, nota: "" },
-    { id: 15, fecha: "2025-03", manual: 285, saveback: 12, roundup: 3, valor: 4180, nota: "Corrección de mercado" },
-    { id: 16, fecha: "2025-04", manual: 300, saveback: 15, roundup: 5, valor: 4450, nota: "" },
-  ],
-  btc: [
-    { id: 1,  fecha: "2024-01", manual: 95,  saveback: 5, roundup: 0, valor: 95,   nota: "" },
-    { id: 2,  fecha: "2024-02", manual: 90,  saveback: 8, roundup: 2, valor: 230,  nota: "" },
-    { id: 3,  fecha: "2024-03", manual: 95,  saveback: 4, roundup: 1, valor: 420,  nota: "" },
-    { id: 4,  fecha: "2024-04", manual: 95,  saveback: 4, roundup: 1, valor: 510,  nota: "" },
-    { id: 5,  fecha: "2024-05", manual: 110, saveback: 8, roundup: 2, valor: 680,  nota: "" },
-    { id: 6,  fecha: "2024-06", manual: 100, saveback: 8, roundup: 2, valor: 720,  nota: "" },
-    { id: 7,  fecha: "2024-07", manual: 95,  saveback: 4, roundup: 1, valor: 850,  nota: "" },
-    { id: 8,  fecha: "2024-08", manual: 95,  saveback: 4, roundup: 1, valor: 790,  nota: "Mes bajista" },
-    { id: 9,  fecha: "2024-09", manual: 95,  saveback: 4, roundup: 1, valor: 920,  nota: "" },
-    { id: 10, fecha: "2024-10", manual: 110, saveback: 8, roundup: 2, valor: 1150, nota: "" },
-    { id: 11, fecha: "2024-11", manual: 95,  saveback: 4, roundup: 1, valor: 1480, nota: "Rally pre-halving" },
-    { id: 12, fecha: "2024-12", manual: 95,  saveback: 4, roundup: 1, valor: 1620, nota: "" },
-    { id: 13, fecha: "2025-01", manual: 100, saveback: 8, roundup: 2, valor: 1750, nota: "" },
-    { id: 14, fecha: "2025-02", manual: 95,  saveback: 4, roundup: 1, valor: 1590, nota: "Corrección" },
-    { id: 15, fecha: "2025-03", manual: 95,  saveback: 4, roundup: 1, valor: 1820, nota: "" },
-    { id: 16, fecha: "2025-04", manual: 110, saveback: 8, roundup: 2, valor: 2010, nota: "" },
-  ],
-};
+// La app arranca vacía: sin productos ni entradas de ejemplo.
+const PRODUCTOS_INIT = [];
+const ENTRADAS_INIT  = {};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 2. UTILS
@@ -139,7 +113,7 @@ const aportTotal = (e)        => (e.manual || 0) + (e.saveback || 0) + (e.roundu
 const esc        = (s)        => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 // IDs reservados para las vistas internas: un producto importado no puede usarlos
 // (colisionaría con la pestaña/vista del mismo nombre y quedaría inaccesible).
-const RESERVED_IDS = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
+const RESERVED_IDS = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "benchmark", "config"]);
 const sanitizeId = (s) => {
   let out = String(s ?? "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
   if (!out) out = `id_${Date.now()}`;
@@ -269,6 +243,7 @@ const state = {
   proyProductos:  null,
   fireGasto:      2000,    // gasto mensual deseado para FIRE
   fireRegla:      0.04,    // regla de retirada (3%/3.5%/4%/5%)   // { [id]: boolean } — visibilidad en gráfico proyección
+  inflacion:      0.025,   // tasa de inflación anual para valores en € reales (proyección/FIRE)
   editEntradaId:  null,
   editProdId:     null,
   productoColor:  COLORES[0],
@@ -278,6 +253,7 @@ const state = {
   diffSnapA:       null,         // id del snapshot A
   diffSnapB:       "current",    // id del snapshot B o "current"
   fiscalSim:       {},           // { [productoId]: { venderEur: number } }
+  benchmarkSymbol:  "EUNL.DE",   // índice de referencia activo (ver BENCHMARKS)
   // Configuración
   etfProvider:      "twelvedata", // "twelvedata" | "yahoo"
   twelveDataApiKey: "",          // API key para precios de ETFs vía Twelve Data
@@ -290,6 +266,8 @@ const twelveDataCache    = {};       // { ticker: { eur, ts, currency } }
 const twelveDataFetching = {};
 const yahooCache    = {};       // { ticker: { eur, ts, currency } }
 const yahooFetching = {};
+const benchmarkCache    = {};   // { symbol: { serie:{YYYY-MM:close}, currency, last, ts } | { error, ts } }
+const benchmarkFetching = {};
 
 const charts = {};
 
@@ -297,13 +275,14 @@ function migrarEntrada(e) {
   if (e.manual !== undefined || e.saveback !== undefined || e.roundup !== undefined) {
     return {
       ...e,
-      manual:   e.manual   ?? 0,
-      saveback: e.saveback ?? 0,
-      roundup:  e.roundup  ?? 0,
-      nota:     e.nota     ?? "",
+      manual:    e.manual    ?? 0,
+      saveback:  e.saveback  ?? 0,
+      roundup:   e.roundup   ?? 0,
+      dividendo: e.dividendo ?? 0,
+      nota:      e.nota       ?? "",
     };
   }
-  return { ...e, manual: e.aportacion || 0, saveback: 0, roundup: 0, nota: e.nota || "" };
+  return { ...e, manual: e.aportacion || 0, saveback: 0, roundup: 0, dividendo: e.dividendo || 0, nota: e.nota || "" };
 }
 
 async function loadState() {
@@ -339,11 +318,14 @@ async function loadState() {
       if (firePrefs) {
         if (firePrefs.gasto != null) state.fireGasto = firePrefs.gasto;
         if (firePrefs.regla != null) state.fireRegla = firePrefs.regla;
+        if (firePrefs.inflacion != null) state.inflacion = firePrefs.inflacion;
       }
       const tdKey = await readField("twelveDataApiKey");
       if (typeof tdKey === "string") state.twelveDataApiKey = tdKey;
       const etfProv = await readField("etfProvider");
       if (ETF_PROVIDERS.includes(etfProv)) state.etfProvider = etfProv;
+      const bench = await readField("benchmarkSymbol");
+      if (typeof bench === "string" && bench) state.benchmarkSymbol = bench;
       // Migración: twelveDataTicker → etfTicker (campo genérico)
       state.productos.forEach(p => {
         if (p.twelveDataTicker && !p.etfTicker) p.etfTicker = p.twelveDataTicker;
@@ -407,9 +389,10 @@ function saveState() {
       await writeField("productos", state.productos);
       await writeField("entradas",  state.entradas);
       await writeField("objetivos", state.objetivos);
-      await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
+      await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
       await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
       await writeField("etfProvider", state.etfProvider || "twelvedata");
+      await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
       hideSaveError();
     })
     .catch(err => {
@@ -448,13 +431,16 @@ function hideSaveError() {
 
 function calcStats(entradas) {
   if (!entradas?.length) return [];
-  let acum = 0, acumManual = 0, acumSaveback = 0, acumRoundup = 0, prevValor = null;
+  let acum = 0, acumManual = 0, acumSaveback = 0, acumRoundup = 0, acumDividendos = 0, prevValor = null;
   return [...entradas].sort((a,b) => a.fecha.localeCompare(b.fecha)).map(e => {
     const ap = aportTotal(e);
     acum         += ap;
-    acumManual   += (e.manual   || 0);
-    acumSaveback += (e.saveback || 0);
-    acumRoundup  += (e.roundup  || 0);
+    acumManual   += (e.manual    || 0);
+    acumSaveback += (e.saveback  || 0);
+    acumRoundup  += (e.roundup   || 0);
+    // Los dividendos cobrados NO son aportación propia: se acumulan aparte para no
+    // inflar el coste base ni distorsionar la TIR/ganancia por revalorización.
+    acumDividendos += (e.dividendo || 0);
     const ganancia = e.valor - acum;
     const rentPct  = acum > 0 ? (ganancia / acum) * 100 : 0;
     let rentMes = null;
@@ -465,7 +451,7 @@ function calcStats(entradas) {
       rentMes = ((e.valor - ap - prevValor) / base) * 100;
     }
     prevValor = e.valor;
-    return { ...e, aportacion: ap, acumAportado: acum, acumManual, acumSaveback, acumRoundup, ganancia, rentPct, rentMes, label: labelMes(e.fecha) };
+    return { ...e, aportacion: ap, acumAportado: acum, acumManual, acumSaveback, acumRoundup, acumDividendos, ganancia, rentPct, rentMes, label: labelMes(e.fecha) };
   });
 }
 
@@ -492,18 +478,19 @@ function statsTotalCalc() {
   //    y valor de cartera usando CARRY-FORWARD del último valor conocido por producto.
   const lastValor = {};
   const filas = fechasOrd.map(fecha => {
-    let manual = 0, saveback = 0, roundup = 0, valor = 0;
+    let manual = 0, saveback = 0, roundup = 0, dividendo = 0, valor = 0;
     state.productos.forEach(p => {
       const e = idxPorProd[p.id][fecha];
       if (e) {
-        manual   += e.manual   || 0;
-        saveback += e.saveback || 0;
-        roundup  += e.roundup  || 0;
+        manual    += e.manual    || 0;
+        saveback  += e.saveback  || 0;
+        roundup   += e.roundup   || 0;
+        dividendo += e.dividendo || 0;
         lastValor[p.id] = e.valor || 0;
       }
       valor += lastValor[p.id] || 0;
     });
-    return { id: fecha, fecha, manual, saveback, roundup, valor };
+    return { id: fecha, fecha, manual, saveback, roundup, dividendo, valor };
   });
 
   _statsTotalCache = calcStats(filas);
@@ -934,7 +921,7 @@ function filtrarFilas(filas, periodo) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const CSV_HEADERS = [
-  "producto_id","producto_nombre","fecha","manual","saveback","roundup","valor","nota",
+  "producto_id","producto_nombre","fecha","manual","saveback","roundup","valor","dividendo","nota",
   // Metadatos de producto (se repiten en cada fila del producto; en import basta la 1ª)
   "producto_referencia","producto_tipologia","producto_divisa","producto_color",
   "producto_unidades","producto_precio_manual","producto_coingecko","producto_etf_ticker",
@@ -995,13 +982,13 @@ function generarCSV() {
         lineas.push([
           escCSV(p.id), escCSV(p.nombre), escCSV(e.fecha),
           e.manual || 0, e.saveback || 0, e.roundup || 0,
-          e.valor || 0, escCSV(e.nota || ""),
+          e.valor || 0, e.dividendo || 0, escCSV(e.nota || ""),
           ...meta,
         ].join(","));
       });
     } else {
       // Producto sin entradas: una fila con metadatos para no perderlo en el export
-      lineas.push([escCSV(p.id), escCSV(p.nombre), "", 0, 0, 0, 0, "", ...meta].join(","));
+      lineas.push([escCSV(p.id), escCSV(p.nombre), "", 0, 0, 0, 0, 0, "", ...meta].join(","));
     }
   });
   return lineas.join("\n");
@@ -1032,7 +1019,8 @@ function importarCSV(texto) {
   const idx = (n) => cab.indexOf(n);
   const iPid = idx("producto_id"), iPnom = idx("producto_nombre"), iF = idx("fecha"),
         iM   = idx("manual"),      iS    = idx("saveback"),        iR = idx("roundup"),
-        iV   = idx("valor"),       iN    = idx("nota"),            iA = idx("aportacion");
+        iV   = idx("valor"),       iN    = idx("nota"),            iA = idx("aportacion"),
+        iDvd = idx("dividendo");
   // Columnas de metadatos de producto (opcionales)
   const iRef  = idx("producto_referencia"), iTip = idx("producto_tipologia"),
         iDiv  = idx("producto_divisa"),      iCol = idx("producto_color"),
@@ -1077,7 +1065,8 @@ function importarCSV(texto) {
       id:    Date.now() + Math.random(),
       fecha: (c[iF] || "").trim(),
       manual, saveback, roundup,
-      valor: parseFloat(c[iV]) || 0,
+      valor:     parseFloat(c[iV]) || 0,
+      dividendo: iDvd >= 0 ? (parseFloat(c[iDvd]) || 0) : 0,
       nota:  (iN >= 0 ? c[iN] : "") || "",
     });
   }
@@ -1156,13 +1145,14 @@ function generarJSON() {
       Object.entries(state.entradas).map(([pid, list]) => [
         pid,
         (list || []).map(e => ({
-          id:       e.id,
-          fecha:    e.fecha,
-          manual:   e.manual   || 0,
-          saveback: e.saveback || 0,
-          roundup:  e.roundup  || 0,
-          valor:    e.valor    || 0,
-          nota:     e.nota     || "",
+          id:        e.id,
+          fecha:     e.fecha,
+          manual:    e.manual    || 0,
+          saveback:  e.saveback  || 0,
+          roundup:   e.roundup   || 0,
+          valor:     e.valor     || 0,
+          dividendo: e.dividendo || 0,
+          nota:      e.nota      || "",
         })),
       ])
     ),
@@ -1175,10 +1165,12 @@ function generarJSON() {
     firePrefs: {
       gasto: state.fireGasto,
       regla: state.fireRegla,
+      inflacion: state.inflacion,
     },
     config: {
       etfProvider:      state.etfProvider || "twelvedata",
       twelveDataApiKey: state.twelveDataApiKey || "",
+      benchmarkSymbol:  state.benchmarkSymbol || "EUNL.DE",
       theme:            document.documentElement.classList.contains("light") ? "light" : "dark",
     },
   };
@@ -1252,13 +1244,14 @@ function importarJSON(texto) {
       if (!/^\d{4}-\d{2}$/.test(fecha)) { descartadas++; return; }
       const num = (v) => Number.isFinite(+v) ? +v : 0;
       entradas[pid].push({
-        id:       e.id ?? (Date.now() + Math.random()),
+        id:        e.id ?? (Date.now() + Math.random()),
         fecha,
-        manual:   num(e.manual),
-        saveback: num(e.saveback),
-        roundup:  num(e.roundup),
-        valor:    num(e.valor),
-        nota:     String(e.nota || ""),
+        manual:    num(e.manual),
+        saveback:  num(e.saveback),
+        roundup:   num(e.roundup),
+        valor:     num(e.valor),
+        dividendo: num(e.dividendo),
+        nota:      String(e.nota || ""),
       });
     });
     entradas[pid].sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -1283,9 +1276,11 @@ function importarJSON(texto) {
   if (raw.firePrefs && typeof raw.firePrefs === "object") {
     const g = +raw.firePrefs.gasto;
     const r = +raw.firePrefs.regla;
+    const inf = +raw.firePrefs.inflacion;
     firePrefs = {
       gasto: Number.isFinite(g) && g > 0 ? g : null,
       regla: Number.isFinite(r) && r > 0 ? r : null,
+      inflacion: Number.isFinite(inf) && inf >= 0 && inf < 1 ? inf : null,
     };
   }
 
@@ -1295,6 +1290,7 @@ function importarJSON(texto) {
     config = {
       etfProvider:      ETF_PROVIDERS.includes(raw.config.etfProvider) ? raw.config.etfProvider : null,
       twelveDataApiKey: typeof raw.config.twelveDataApiKey === "string" ? raw.config.twelveDataApiKey : null,
+      benchmarkSymbol:  BENCHMARKS.some(b => b.id === raw.config.benchmarkSymbol) ? raw.config.benchmarkSymbol : null,
       theme:            raw.config.theme === "light" || raw.config.theme === "dark" ? raw.config.theme : null,
     };
   }
@@ -1326,6 +1322,7 @@ function handleImportJSON(file) {
       if (data.firePrefs) {
         if (data.firePrefs.gasto != null) state.fireGasto = data.firePrefs.gasto;
         if (data.firePrefs.regla != null) state.fireRegla = data.firePrefs.regla;
+        if (data.firePrefs.inflacion != null) state.inflacion = data.firePrefs.inflacion;
       }
       state.tab = state.productos[0]?.id || "total";
     } else {
@@ -1344,6 +1341,7 @@ function handleImportJSON(file) {
     if (data.config) {
       if (data.config.etfProvider)      state.etfProvider     = data.config.etfProvider;
       if (data.config.twelveDataApiKey != null) state.twelveDataApiKey = data.config.twelveDataApiKey;
+      if (data.config.benchmarkSymbol)  state.benchmarkSymbol = data.config.benchmarkSymbol;
       if (data.config.theme)            { localStorage.setItem("tema", data.config.theme); applyTheme(data.config.theme); }
     }
     saveState();
@@ -1699,6 +1697,67 @@ async function fetchYahooPrice(ticker) {
   return yahooFetching[ticker];
 }
 
+// Serie mensual de cierres de un símbolo Yahoo (para el benchmark). Reutiliza los
+// mismos proxies CORS que fetchYahooPrice. Devuelve { serie:{YYYY-MM:close}, currency, last }
+// o null si falla (cachea el error con TTL para no martillear los proxies).
+async function fetchYahooSeries(symbol) {
+  symbol = (symbol || "").trim();
+  if (!symbol) return null;
+  const cached = benchmarkCache[symbol];
+  if (cached?.serie && Date.now() - cached.ts < BENCHMARK_TTL) return cached;
+  if (benchmarkFetching[symbol]) return benchmarkFetching[symbol];
+  benchmarkFetching[symbol] = (async () => {
+    try {
+      const target = `${YAHOO_API}${encodeURIComponent(symbol)}?interval=1mo&range=15y`;
+      let lastErr = null, yahooErr = null;
+      for (let i = 0; i < YAHOO_PROXIES.length; i++) {
+        const url = YAHOO_PROXIES[i](target);
+        try {
+          const r = await fetch(url, { headers: { accept: "application/json" } });
+          if (!r.ok) { lastErr = new Error(`Proxy saturado (HTTP ${r.status})`); continue; }
+          const text = await r.text();
+          const trimmed = text.trimStart();
+          if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) { lastErr = new Error("Proxy no devolvió JSON"); continue; }
+          let data;
+          try { data = JSON.parse(text); } catch { lastErr = new Error("Respuesta JSON inválida"); continue; }
+          const result = data?.chart?.result?.[0];
+          if (!result) {
+            const ye = data?.chart?.error;
+            yahooErr = new Error(ye ? `${ye.description || ye.code}` : "Índice no encontrado");
+            break;
+          }
+          const tstamps = result.timestamp || [];
+          const closes  = result.indicators?.quote?.[0]?.close || [];
+          const currency = result.meta?.currency;
+          if (!tstamps.length || !closes.length) { yahooErr = new Error("Sin serie histórica"); break; }
+          const serie = {};
+          let last = null;
+          for (let k = 0; k < tstamps.length; k++) {
+            const c = closes[k];
+            if (!Number.isFinite(c)) continue;
+            const d = new Date(tstamps[k] * 1000);
+            serie[`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`] = c;
+            last = c;
+          }
+          const liveLast = result.meta?.regularMarketPrice;
+          if (Number.isFinite(liveLast)) last = liveLast;
+          if (last == null) { yahooErr = new Error("Sin precios válidos"); break; }
+          benchmarkCache[symbol] = { serie, currency: currency || "EUR", last, ts: Date.now() };
+          return benchmarkCache[symbol];
+        } catch (err) { lastErr = err; }
+      }
+      const finalErr = yahooErr || lastErr || new Error("Sin respuesta de Yahoo");
+      const msg = yahooErr ? finalErr.message : `Servicio no disponible (${finalErr.message})`;
+      console.warn("[Cartera] Benchmark:", msg);
+      benchmarkCache[symbol] = { error: msg, ts: Date.now() };
+      return null;
+    } finally {
+      delete benchmarkFetching[symbol];
+    }
+  })();
+  return benchmarkFetching[symbol];
+}
+
 // Refresca en background los precios (CoinGecko + ETF provider activo) de todos
 // los productos y vuelve a renderizar si llega algo nuevo. Llamado tras cada render.
 async function refreshAllPricesAsync() {
@@ -1734,7 +1793,7 @@ function needsPriceRender() {
   return state.tab === "asignacion" ||
          state.tab === "fiscal" ||
          (state.tab !== "total" && state.tab !== "proyeccion" &&
-          state.tab !== "fire" && state.tab !== "diff");
+          state.tab !== "fire" && state.tab !== "diff" && state.tab !== "benchmark");
 }
 
 function priceAgeLabel(ts) {
@@ -2023,25 +2082,69 @@ function drawChartHistograma(filas) {
 function drawChartPeso(data) {
   const ctx = $("#chartPeso")?.getContext("2d");
   if (!ctx) return;
+
+  const total    = data.reduce((s, d) => s + d.valor, 0);
+  const cs        = getComputedStyle(document.documentElement);
+  const textColor = (cs.getPropertyValue("--text")   || "").trim() || "#E2E8F0";
+  const dimColor  = (cs.getPropertyValue("--dimmer") || "").trim() || "#6B7280";
+  const totalFmt  = new Intl.NumberFormat("es-ES",
+    { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(total);
+
+  // Plugin local (solo este chart): rótulo "TOTAL" + importe en el hueco del donut.
+  const centerText = {
+    id: "pesoCenterText",
+    afterDraw(chart) {
+      const arc = chart.getDatasetMeta(0).data[0];
+      if (!arc) return;
+      const c  = chart.ctx;
+      const cx = arc.x, cy = arc.y;
+      const innerD = arc.innerRadius * 1.8;   // ancho útil dentro del agujero
+      c.save();
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillStyle = dimColor;
+      c.font = "600 9px monospace";
+      c.fillText("TOTAL", cx, cy - 11);
+      // Ajuste de tamaño para que el importe quepa en el agujero (responsive).
+      let fs = 18;
+      c.font = `700 ${fs}px 'Lato', sans-serif`;
+      while (c.measureText(totalFmt).width > innerD && fs > 9) {
+        fs -= 1; c.font = `700 ${fs}px 'Lato', sans-serif`;
+      }
+      c.fillStyle = textColor;
+      c.fillText(totalFmt, cx, cy + 6);
+      c.restore();
+    }
+  };
+
   charts.peso = new Chart(ctx, {
     type: "doughnut",
     data: {
       labels: data.map(d => d.nombre),
       datasets: [{
         data: data.map(d => d.valor),
-        backgroundColor: data.map(d => d.color + "D9"),
-        borderColor: data.map(d => d.color + "40"),
-        borderWidth: 2,
-        hoverOffset: 8,
+        backgroundColor: data.map(d => d.color + "E6"),
+        borderColor: "transparent",
+        borderWidth: 0,
+        borderRadius: 4,       // redondeo sutil (radios grandes deforman segmentos pequeños)
+        spacing: 3,            // separación ligera entre productos
+        hoverOffset: 12,
+        hoverBorderColor: data.map(d => d.color),
+        hoverBorderWidth: 2,
       }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      cutout: "68%",
+      cutout: "72%",
+      layout: { padding: 6 },
       plugins: {
         legend: {
           position: "right",
-          labels: { color: "#9CA3AF", font: { family: "monospace", size: 10 }, padding: 14, boxWidth: 10, boxHeight: 10 }
+          labels: {
+            color: "#9CA3AF", font: { family: "monospace", size: 10 },
+            padding: 14, boxWidth: 8, boxHeight: 8,
+            usePointStyle: true, pointStyle: "circle",
+          }
         },
         tooltip: { ...TOOLTIP_BASE, displayColors: true,
           callbacks: {
@@ -2053,7 +2156,8 @@ function drawChartPeso(data) {
           }
         }
       }
-    }
+    },
+    plugins: [centerText]
   });
 }
 
@@ -2195,6 +2299,7 @@ function getAccentColor() {
   if (state.tab === "asignacion") return "#22D3EE";
   if (state.tab === "diff")       return "#FB923C";
   if (state.tab === "fiscal")     return "#F87171";
+  if (state.tab === "benchmark")  return "#38BDF8";
   if (state.tab === "config")     return "#94A3B8";
   if (state.tab === "total")      return "#FBBF24";
   return state.productos.find(p => p.id === state.tab)?.color || "#FBBF24";
@@ -2372,7 +2477,7 @@ function render() {
   renderTabs();
 
   const btnAdd = $("#btnAddEntry");
-  const reservados = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
+  const reservados = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "benchmark", "config"]);
   const esProd = !reservados.has(state.tab);
   btnAdd.style.display    = esProd ? "inline-block" : "none";
   btnAdd.style.background = accent;
@@ -2395,6 +2500,7 @@ function render() {
   else if (state.tab === "asignacion") result = renderAsignacion();
   else if (state.tab === "diff")       result = renderDiff();
   else if (state.tab === "fiscal")     result = renderFiscal();
+  else if (state.tab === "benchmark")  result = renderBenchmark();
   else if (state.tab === "config")     result = renderConfig();
   else                                  result = renderTabActual();
   // Fetch async de precios CoinGecko + re-render si llega algo
@@ -2548,6 +2654,40 @@ function renderTabActual() {
       <div class="kpi-sub">${k.s}</div>
     </div>
   `).join("")}</div>`;
+
+  // Panel de dividendos: solo si se ha cobrado alguna renta (no estorba carteras sin dividendos).
+  const divTotal = ultima.acumDividendos || 0;
+  if (divTotal > 0) {
+    const div12m   = filasFull.slice(-12).reduce((s, f) => s + (f.dividendo || 0), 0);
+    const yieldPct = ultima.valor > 0 ? (div12m / ultima.valor) * 100 : 0;
+    const rentaApt = ultima.acumAportado > 0 ? (divTotal / ultima.acumAportado) * 100 : 0;
+    const rentTot  = ultima.acumAportado > 0 ? ((ultima.ganancia + divTotal) / ultima.acumAportado) * 100 : 0;
+    html += `<div class="panel">
+      <div class="panel-title">INGRESOS POR RENTAS · DIVIDENDOS Y CUPONES</div>
+      <div class="div-stats">
+        <div class="div-stat">
+          <div class="ds-l">TOTAL COBRADO</div>
+          <div class="ds-v" style="color:var(--green)">${fmtE(divTotal)}</div>
+          <div class="ds-s">desde el inicio</div>
+        </div>
+        <div class="div-stat">
+          <div class="ds-l">YIELD (12M)</div>
+          <div class="ds-v">${fmt(yieldPct)}%</div>
+          <div class="ds-s">${fmtE(div12m)} últimos 12 m</div>
+        </div>
+        <div class="div-stat">
+          <div class="ds-l">RENTA / APORTADO</div>
+          <div class="ds-v">${fmt(rentaApt)}%</div>
+          <div class="ds-s">recuperado vía rentas</div>
+        </div>
+        <div class="div-stat">
+          <div class="ds-l">RENTABILIDAD TOTAL</div>
+          <div class="ds-v" style="color:${rentTot>=0?"var(--green)":"var(--red)"}">${rentTot>=0?"+":""}${fmt(rentTot)}%</div>
+          <div class="ds-s">revalorización + rentas</div>
+        </div>
+      </div>
+    </div>`;
+  }
 
   // Paneles que NO dependen del filtro temporal (van antes del filter-row):
   // TIR comparativa y distribución de cartera siempre usan datos completos.
@@ -3101,6 +3241,11 @@ function renderProyeccion() {
   const finalR  = realista?.at(-1);
   const totalAp = finalC?.aportado || 0;
 
+  // Inflación: factor para deflactar valores nominales a € de hoy (poder adquisitivo).
+  const infl       = state.inflacion || 0;
+  const factorReal = Math.pow(1 + infl, state.horizonte);
+  const aReal      = (v) => (v || 0) / factorReal;
+
   // Inicializar visibilidad de productos (todo ON por defecto)
   if (!state.proyProductos) state.proyProductos = {};
   state.productos.forEach(p => {
@@ -3228,6 +3373,16 @@ function renderProyeccion() {
           <span>2.000€</span>
         </div>
       </div>
+      <div>
+        <div class="label-row">
+          <label>INFLACIÓN ANUAL</label>
+          <span class="val">${fmt(infl*100, 1)}%</span>
+        </div>
+        <input type="range" min="0" max="6" step="0.1" value="${(infl*100).toFixed(1)}" id="rangeInfl">
+        <div class="range-marks">
+          ${[0, 2, 3, 5].map(v => `<button class="${Math.abs(infl*100 - v) < 0.05 ? "active" : ""}" data-infl="${v}">${v}%</button>`).join("")}
+        </div>
+      </div>
     </div>
 
     ${checkboxesHtml}
@@ -3239,6 +3394,7 @@ function renderProyeccion() {
             <div>
               <div class="scen-label">${s.l}</div>
               <div class="scen-value">${fmtE(s.v)}</div>
+              ${infl > 0 ? `<div class="scen-real-eur">≈ ${fmtE(aReal(s.v))} en € de hoy</div>` : ""}
             </div>
             <span class="scen-tag">${s.t}</span>
           </div>
@@ -3270,6 +3426,7 @@ function renderProyeccion() {
         <p class="mc-foot">Volatilidad mensual histórica ${fmt(mcStats.stdMensualPct)}% · retorno medio ${fmt(mcStats.mediaMensualPct)}%/mes</p>
       </div>` : ""}
 
+    ${infl > 0 ? `<p class="disclaimer">Los importes «en € de hoy» descuentan una inflación anual del ${fmt(infl*100,1)}% para reflejar el poder adquisitivo actual. Las líneas del gráfico son valores nominales.</p>` : ""}
     <p class="disclaimer">Proyección orientativa. No constituye asesoramiento financiero. Rentabilidades pasadas no garantizan resultados futuros.</p>`;
 
   $("#main").innerHTML = html;
@@ -3280,6 +3437,10 @@ function renderProyeccion() {
   $$('[data-h]').forEach(b => b.onclick = () => { state.horizonte = +b.dataset.h; renderProyeccion(); });
   $("#rangeAport").oninput = (e) => { state.aportMensual = +e.target.value; updateRangeLabel("APORTACIÓN MENSUAL", fmtE(state.aportMensual)); rerenderProy(); };
   if ($("#btnResetAport")) $("#btnResetAport").onclick = () => { state.aportMensual = null; renderProyeccion(); };
+  const rangeInfl = $("#rangeInfl");
+  rangeInfl.oninput  = (e) => { state.inflacion = +e.target.value / 100; updateRangeLabel("INFLACIÓN ANUAL", `${fmt(state.inflacion*100,1)}%`); rerenderProy(); };
+  rangeInfl.onchange = () => saveState();   // persistir solo al soltar el slider
+  $$('[data-infl]').forEach(b => b.onclick = () => { state.inflacion = +b.dataset.infl / 100; saveState(); renderProyeccion(); });
   $$('[data-prod-proy]').forEach(cb => cb.onchange = () => {
     state.proyProductos[cb.dataset.prodProy] = cb.checked;
     renderProyeccion();
@@ -3369,15 +3530,20 @@ function renderFIRE() {
 
   const gasto      = state.fireGasto || 2000;
   const regla      = state.fireRegla || 0.04;
+  const infl       = state.inflacion || 0;
+  const inflMensual = Math.pow(1 + infl, 1/12) - 1;
   const capitalObj = (gasto * 12) / regla;
   const gap        = capitalObj - valorAct;
   const pctCompl   = capitalObj > 0 ? Math.min((valorAct / capitalObj) * 100, 100) : 0;
 
-  // Año estimado FIRE: proyecta con TIR histórica (o 6% fallback) hasta cruzar capitalObj
+  // Año estimado FIRE: proyecta con TIR histórica (o 6% fallback) hasta cruzar capitalObj.
+  // Se usa la rentabilidad REAL (descontada la inflación) porque el capital objetivo está en
+  // € de hoy y la regla de retirada ya asume retiros ajustados a inflación.
   const tasaProy = tirHist != null && tirHist > 0 ? tirHist : 0.06;
+  const tasaReal = (1 + tasaProy) / (1 + infl) - 1;
   let anoFire = null, mesesFire = null;
   if (valorAct < capitalObj) {
-    const tasaM = tasaProy / 12;
+    const tasaM = tasaReal / 12;
     let v = valorAct, m = 0;
     const maxMeses = 80 * 12;   // tope 80 años para evitar loop infinito
     while (v < capitalObj && m < maxMeses) {
@@ -3408,7 +3574,7 @@ function renderFIRE() {
       valorInicial: valorAct,
       aportMensual,
       meses: maxMeses,
-      mediaMensual: mediaPct / 100,
+      mediaMensual: mediaPct / 100 - inflMensual,   // retorno real (descontada inflación)
       stdMensual:   stdPct / 100,
       nSims,
     });
@@ -3463,6 +3629,18 @@ function renderFIRE() {
             </button>`).join("")}
         </div>
       </div>
+      <div class="fire-infl-ctrl">
+        <div class="label-row">
+          <label>INFLACIÓN ANUAL
+            <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Descuenta la inflación de la rentabilidad esperada. El año FIRE y las probabilidades se calculan en € reales (poder adquisitivo de hoy). Ponlo a 0% para el cálculo nominal.">i</span>
+          </label>
+          <span class="val">${fmt(infl*100, 1)}%</span>
+        </div>
+        <input type="range" min="0" max="6" step="0.1" value="${(infl*100).toFixed(1)}" id="rangeFireInfl" style="accent-color:${fireColor}">
+        <div class="range-marks">
+          ${[0, 2, 3, 5].map(v => `<button class="${Math.abs(infl*100 - v) < 0.05 ? "active" : ""}" data-infl-fire="${v}">${v}%</button>`).join("")}
+        </div>
+      </div>
     </div>
 
     <div class="kpis">
@@ -3485,7 +3663,7 @@ function renderFIRE() {
       </div>
       <div class="kpi">
         <div class="kpi-label">AÑO ESTIMADO FIRE
-          <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Proyección determinista con tu TIR histórica (${tirHist != null ? `${(tirHist*100).toFixed(1)}%` : '6% por defecto'}) y aportación mensual media de los últimos 3 meses (${fmtE(aportMensual)}). El año real puede variar significativamente.">i</span>
+          <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Proyección determinista con tu TIR histórica (${tirHist != null ? `${(tirHist*100).toFixed(1)}%` : '6% por defecto'})${infl > 0 ? ` ajustada por inflación → rentabilidad real ${(tasaReal*100).toFixed(1)}%` : ''} y aportación mensual media de los últimos 3 meses (${fmtE(aportMensual)}). El año real puede variar significativamente.">i</span>
         </div>
         <div class="kpi-value" style="color:${anoFire ? fireColor : "var(--dimmer)"}">${anoFire ?? "—"}</div>
         <div class="kpi-sub">${anosRest != null ? `En ${anosRest.toFixed(1)} años` : "Datos insuficientes"}</div>
@@ -3529,7 +3707,7 @@ function renderFIRE() {
       </div>
     </div>
 
-    <p class="disclaimer">Cálculo orientativo basado en la regla de retirada constante (Trinity Study). No considera inflación, fiscalidad ni shocks de mercado. La regla del 4% asume un horizonte de 30 años con cartera 60/40.</p>
+    <p class="disclaimer">Cálculo orientativo basado en la regla de retirada constante (Trinity Study). ${infl > 0 ? `El año estimado y las probabilidades se calculan en € reales, descontando una inflación anual del ${fmt(infl*100,1)}%.` : "Inflación al 0%: cálculo en términos nominales."} No considera fiscalidad ni shocks de mercado. La regla del 4% asume un horizonte de 30 años con cartera 60/40.</p>
   `;
 
   $("#main").innerHTML = html;
@@ -3541,6 +3719,16 @@ function renderFIRE() {
   };
   $$('[data-regla]').forEach(b => b.onclick = () => {
     state.fireRegla = parseFloat(b.dataset.regla);
+    saveState();
+    renderFIRE();
+  });
+  $("#rangeFireInfl").oninput = (e) => {
+    state.inflacion = +e.target.value / 100;
+    saveState();
+    renderFIRE();
+  };
+  $$('[data-infl-fire]').forEach(b => b.onclick = () => {
+    state.inflacion = +b.dataset.inflFire / 100;
     saveState();
     renderFIRE();
   });
@@ -3849,6 +4037,11 @@ function renderDiffSync(snaps) {
   const gananciaA = resA.totalValor - resA.totalAportado;
   const gananciaB = resB.totalValor - resB.totalAportado;
   const dGanancia = gananciaB - gananciaA;
+  // Rentabilidad (ROI = ganancia / aportado): mide la eficiencia relativa,
+  // complementa la GANANCIA absoluta. Δ se expresa en puntos porcentuales.
+  const rentA = resA.totalAportado > 0 ? (gananciaA / resA.totalAportado) * 100 : 0;
+  const rentB = resB.totalAportado > 0 ? (gananciaB / resB.totalAportado) * 100 : 0;
+  const dRent = rentB - rentA;
   const colorD = (v) => v >= 0 ? "var(--green)" : "var(--red)";
   const signo  = (v) => v >= 0 ? "+" : "";
 
@@ -3898,6 +4091,11 @@ function renderDiffSync(snaps) {
         <div class="kpi-label">GANANCIA</div>
         <div class="kpi-value" style="color:${colorD(gananciaB)}">${fmtE(gananciaA)} → ${fmtE(gananciaB)}</div>
         <div class="kpi-sub" style="color:${colorD(dGanancia)}">${signo(dGanancia)}${fmtE(dGanancia)}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">RENTABILIDAD</div>
+        <div class="kpi-value" style="color:${colorD(rentB)}">${signo(rentA)}${fmt(rentA)}% → ${signo(rentB)}${fmt(rentB)}%</div>
+        <div class="kpi-sub" style="color:${colorD(dRent)}">${signo(dRent)}${fmt(dRent)} pp</div>
       </div>
     </div>`;
 
@@ -4173,13 +4371,217 @@ function renderObjetivos(productoId, valorActual) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 7e. VISTA · BENCHMARK (¿bates al índice?)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Simula invertir tus MISMAS aportaciones, en las MISMAS fechas, en el índice.
+// Devuelve la curva de valor del índice mes a mes y el valor final a precio actual.
+function simularBenchmark(filasTot, data) {
+  const serie  = data.serie;
+  const ymsOrd = Object.keys(serie).sort();
+  // Precio del índice en un mes: exacto, o el último cierre conocido anterior (cubre huecos).
+  const precioEn = (ym) => {
+    if (serie[ym] != null) return serie[ym];
+    let best = null;
+    for (const k of ymsOrd) { if (k <= ym) best = serie[k]; else break; }
+    return best;
+  };
+  let unidades = 0;
+  const puntos = [];
+  filasTot.forEach(f => {
+    const precio = precioEn(f.fecha);
+    if (precio && f.aportacion > 0) unidades += f.aportacion / precio;
+    const valIdx = precio ? unidades * precio : (puntos.at(-1)?.indice ?? 0);
+    puntos.push({ label: f.label, indice: valIdx });
+  });
+  const valorFinal = unidades * data.last;   // a precio actual del índice
+  if (puntos.length) puntos.at(-1).indice = valorFinal;
+  return { puntos, valorFinal };
+}
+
+function renderBenchmark() {
+  const accent = "#38BDF8";
+  setAccentVars(accent);
+  const bench = BENCHMARKS.find(b => b.id === state.benchmarkSymbol) || BENCHMARKS[0];
+
+  const selectorHTML = `
+    <div class="panel bench-sel-panel">
+      <label class="bench-sel-label">ÍNDICE DE REFERENCIA</label>
+      <div class="bench-sel-chips">
+        ${BENCHMARKS.map(b => `
+          <button class="bench-chip ${b.id===state.benchmarkSymbol?"active":""}" data-bench="${esc(b.id)}" title="${esc(b.desc)}">
+            ${esc(b.nombre)}
+          </button>`).join("")}
+      </div>
+    </div>`;
+
+  $("#main").innerHTML = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">VS. BENCHMARK</h2>
+        <div class="subtitle">¿Tu cartera bate al índice con tus mismas aportaciones?</div>
+      </div>
+    </div>
+    ${selectorHTML}
+    <div class="panel"><div class="diff-loading">Cargando ${esc(bench.nombre)}…</div></div>`;
+
+  bindBenchChips();
+  fetchYahooSeries(bench.id).then(data => {
+    // Evita pisar el DOM si el usuario navegó fuera o cambió de índice mientras cargaba.
+    if (state.tab !== "benchmark" || bench.id !== state.benchmarkSymbol) return;
+    renderBenchmarkSync(data, bench);
+  });
+}
+
+function bindBenchChips() {
+  $$('[data-bench]').forEach(b => b.onclick = () => {
+    if (b.dataset.bench === state.benchmarkSymbol) return;
+    state.benchmarkSymbol = b.dataset.bench;
+    saveState();
+    renderBenchmark();
+  });
+}
+
+function renderBenchmarkSync(data, bench) {
+  const accent   = "#38BDF8";
+  const filasTot = statsTotalCalc();
+
+  const selectorHTML = `
+    <div class="panel bench-sel-panel">
+      <label class="bench-sel-label">ÍNDICE DE REFERENCIA</label>
+      <div class="bench-sel-chips">
+        ${BENCHMARKS.map(b => `
+          <button class="bench-chip ${b.id===state.benchmarkSymbol?"active":""}" data-bench="${esc(b.id)}" title="${esc(b.desc)}">
+            ${esc(b.nombre)}
+          </button>`).join("")}
+      </div>
+    </div>`;
+
+  const head = `
+    <div class="title-row">
+      <div>
+        <h2 style="color:${accent}">VS. BENCHMARK</h2>
+        <div class="subtitle">¿Tu cartera bate al índice con tus mismas aportaciones?</div>
+      </div>
+    </div>
+    ${selectorHTML}`;
+
+  // Casos sin datos
+  if (filasTot.length < 2) {
+    $("#main").innerHTML = head + `<div class="panel"><div class="empty" style="padding:48px 0">
+      <div class="empty-title">SIN DATOS SUFICIENTES</div>
+      <div class="empty-sub">Registra al menos dos meses para comparar con el índice</div>
+    </div></div>`;
+    bindBenchChips();
+    return;
+  }
+  if (!data) {
+    const err = benchmarkCache[bench.id]?.error || "No se pudo obtener la serie del índice";
+    $("#main").innerHTML = head + `<div class="panel"><div class="empty" style="padding:48px 0">
+      <div class="empty-title">ÍNDICE NO DISPONIBLE</div>
+      <div class="empty-sub">${esc(err)}. Reintenta en unos segundos (proxies públicos).</div>
+    </div></div>`;
+    bindBenchChips();
+    return;
+  }
+  if (data.currency && data.currency !== "EUR") {
+    $("#main").innerHTML = head + `<div class="panel"><div class="empty" style="padding:48px 0">
+      <div class="empty-title">DIVISA NO COMPATIBLE</div>
+      <div class="empty-sub">El índice cotiza en ${esc(data.currency)}, no en EUR. Elige otro.</div>
+    </div></div>`;
+    bindBenchChips();
+    return;
+  }
+
+  const { puntos, valorFinal } = simularBenchmark(filasTot, data);
+  const ultima      = filasTot.at(-1);
+  const aportado    = ultima.acumAportado;
+  const valorCart   = ultima.valor;
+  const rentCart    = aportado > 0 ? (valorCart  - aportado) / aportado * 100 : 0;
+  const rentIdx     = aportado > 0 ? (valorFinal - aportado) / aportado * 100 : 0;
+  const alpha       = rentCart - rentIdx;
+  const diffEur     = valorCart - valorFinal;
+  const gana        = alpha >= 0;
+  const col         = (v) => v >= 0 ? "var(--green)" : "var(--red)";
+
+  const kpisHTML = `
+    <div class="kpis">
+      <div class="kpi">
+        <div class="kpi-label">TU CARTERA</div>
+        <div class="kpi-value" style="color:${accent}">${fmtE(valorCart)}</div>
+        <div class="kpi-sub">${rentCart>=0?"+":""}${fmt(rentCart)}% sobre aportado</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">EN ${esc(bench.nombre.toUpperCase())}</div>
+        <div class="kpi-value">${fmtE(valorFinal)}</div>
+        <div class="kpi-sub">${rentIdx>=0?"+":""}${fmt(rentIdx)}% sobre aportado</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">DIFERENCIA</div>
+        <div class="kpi-value" style="color:${col(diffEur)}">${diffEur>=0?"+":""}${fmtE(diffEur)}</div>
+        <div class="kpi-sub">${gana ? "a favor de tu cartera" : "a favor del índice"}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">ALPHA
+          <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Diferencia de rentabilidad entre tu cartera y el índice, invirtiendo tus mismas aportaciones en las mismas fechas (comparación money-weighted). Positivo = bates al índice.">i</span>
+        </div>
+        <div class="kpi-value" style="color:${col(alpha)}">${alpha>=0?"+":""}${fmt(alpha)} pp</div>
+        <div class="kpi-sub">${gana ? "🎉 bates al mercado" : "por debajo del índice"}</div>
+      </div>
+    </div>`;
+
+  $("#main").innerHTML = head + kpisHTML + `
+    <div class="panel">
+      <div class="panel-title">EVOLUCIÓN · TU CARTERA VS ${esc(bench.nombre.toUpperCase())}</div>
+      <div class="chart-box tall"><canvas id="chartBench"></canvas></div>
+    </div>
+    <p class="disclaimer">Simulación: se invierten tus aportaciones reales (manual + saveback + round-up) en el ETF ${esc(bench.desc)} a su cierre de cada mes, sin comisiones ni dividendos del índice. Datos de Yahoo Finance vía proxy público; pueden diferir ligeramente del índice oficial.</p>`;
+
+  bindBenchChips();
+
+  const labels = filasTot.map(f => f.label);
+  drawChartBenchmark(labels, filasTot.map(f => f.valor), puntos.map(p => Math.round(p.indice)), bench.nombre, accent);
+}
+
+function drawChartBenchmark(labels, cartera, indice, nombreIdx, accent) {
+  const ctx = $("#chartBench")?.getContext("2d");
+  if (!ctx) return;
+  charts.bench = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Tu cartera", data: cartera,
+          borderColor: accent, borderWidth: 2.5,
+          backgroundColor: (c) => c.chart.chartArea ? makeGradient(c.chart.ctx, accent, c.chart.chartArea, 0.18) : "transparent",
+          tension: 0.3, fill: true, pointRadius: 0, pointHoverRadius: 4 },
+        { label: nombreIdx, data: indice,
+          borderColor: "#FBBF24", borderWidth: 2, borderDash: [6, 3],
+          backgroundColor: "transparent",
+          tension: 0.3, fill: false, pointRadius: 0, pointHoverRadius: 4 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#9CA3AF", font: { family: "monospace", size: 10 }, boxWidth: 12, padding: 12 } },
+        tooltip: { ...TOOLTIP_BASE, displayColors: true,
+          callbacks: { label: (c) => ` ${c.dataset.label}: ${fmtE(c.parsed.y)}` } },
+      },
+      scales: gridConfig(fmtTickEUR),
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 8. MODALS
 // ═══════════════════════════════════════════════════════════════════════════
 
 function openEntryModal(entry = null) {
   if (state.tab === "total" || state.tab === "proyeccion" || state.tab === "fire"
       || state.tab === "asignacion" || state.tab === "diff" || state.tab === "fiscal"
-      || state.tab === "config") return;
+      || state.tab === "benchmark" || state.tab === "config") return;
   state.editEntradaId = entry?.id || null;
   const prod   = state.productos.find(p => p.id === state.tab);
   const accent = getAccentColor();
@@ -4192,6 +4594,7 @@ function openEntryModal(entry = null) {
   $("#meSaveback").value        = entry?.saveback ?? "";
   $("#meRoundup").value         = entry?.roundup  ?? "";
   $("#meValor").value           = entry?.valor    ?? "";
+  $("#meDividendo").value       = entry?.dividendo ?? "";
   $("#meNota").value            = entry?.nota     ?? "";
   recalcMETotal();
   $("#meSave").style.background = accent;
@@ -4212,11 +4615,12 @@ function saveEntry() {
   const e = {
     id:       state.editEntradaId || Date.now(),
     fecha,
-    manual:   parseFloat($("#meManual").value)   || 0,
-    saveback: parseFloat($("#meSaveback").value) || 0,
-    roundup:  parseFloat($("#meRoundup").value)  || 0,
-    valor:    parseFloat($("#meValor").value)    || 0,
-    nota:     ($("#meNota").value || "").trim(),
+    manual:    parseFloat($("#meManual").value)    || 0,
+    saveback:  parseFloat($("#meSaveback").value)  || 0,
+    roundup:   parseFloat($("#meRoundup").value)   || 0,
+    valor:     parseFloat($("#meValor").value)     || 0,
+    dividendo: parseFloat($("#meDividendo").value) || 0,
+    nota:      ($("#meNota").value || "").trim(),
   };
   const pid   = state.tab;
   const lista = state.entradas[pid] || [];
@@ -4392,7 +4796,7 @@ function openObjetivosModal() {
     { id: "total", nombre: "Cartera Total" },
     ...state.productos,
   ].map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("");
-  const ctx = (state.tab === "proyeccion" || state.tab === "fire") ? "total" : state.tab;
+  const ctx = RESERVED_IDS.has(state.tab) && state.tab !== "total" ? "total" : state.tab;
   sel.value = ctx;
   $("#objNombre").value = "";
   $("#objMeta").value   = "";
@@ -4521,7 +4925,7 @@ async function enableEncryption() {
     await writeField("productos", state.productos);
     await writeField("entradas",  state.entradas);
     await writeField("objetivos", state.objetivos);
-    await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
+    await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
     await reencryptSnapshots(null, _cryptoKey);   // cifrar snapshots existentes
@@ -4546,7 +4950,7 @@ async function disableEncryption() {
     await dbPut(DB_KV, state.productos, "productos");
     await dbPut(DB_KV, state.entradas,  "entradas");
     await dbPut(DB_KV, state.objetivos, "objetivos");
-    await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla }, "firePrefs");
+    await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion }, "firePrefs");
     await dbPut(DB_KV, state.twelveDataApiKey || "", "twelveDataApiKey");
     await dbPut(DB_KV, state.etfProvider || "twelvedata", "etfProvider");
     renderSegBody();
@@ -4584,7 +4988,7 @@ async function changePassphrase() {
     await writeField("productos", state.productos);
     await writeField("entradas",  state.entradas);
     await writeField("objetivos", state.objetivos);
-    await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla });
+    await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
     await reencryptSnapshots(key, _cryptoKey);   // re-cifrar snapshots con la nueva clave
@@ -4672,7 +5076,7 @@ function handleShortcut(e) {
 
   const k = e.key.toLowerCase();
 
-  const _reservadosShortcut = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal", "config"]);
+  const _reservadosShortcut = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal", "benchmark", "config"]);
   switch (k) {
     case "n":
       if (!_reservadosShortcut.has(state.tab)) {
@@ -4718,6 +5122,12 @@ function handleShortcut(e) {
     case "t":
       e.preventDefault();
       state.tab = "fiscal";
+      closeDrawer();
+      render();
+      break;
+    case "b":
+      e.preventDefault();
+      state.tab = "benchmark";
       closeDrawer();
       render();
       break;
@@ -4814,6 +5224,7 @@ function bindGlobals() {
   $("#btnAsignacion").onclick    = () => { state.tab = "asignacion"; closeDrawer(); render(); };
   $("#btnDiff").onclick          = () => { state.tab = "diff"; closeDrawer(); render(); };
   $("#btnFiscal").onclick        = () => { state.tab = "fiscal"; closeDrawer(); render(); };
+  $("#btnBenchmark").onclick     = () => { state.tab = "benchmark"; closeDrawer(); render(); };
   $("#btnChangelog").onclick     = openChangelog;
   $("#btnNewProdDrawer").onclick = openProdModal;
 

@@ -1,559 +1,92 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<!-- Content-Security-Policy: defensa en profundidad contra XSS. script-src no
-     permite 'unsafe-inline' → un script o handler inyectado no se ejecutaría.
-     connect-src enumera exactamente las APIs de precios y proxies usados. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://api.coingecko.com https://api.twelvedata.com https://query1.finance.yahoo.com https://api.allorigins.win https://api.codetabs.com https://corsproxy.io https://thingproxy.freeboard.io https://cors-proxy.htmldriven.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'">
-<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080C12">
-<meta name="description" content="Seguimiento personal de cartera de inversiones">
-<!-- PWA / iOS Safari -->
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Mi Cartera">
-<meta name="application-name" content="Mi Cartera">
-<title>Mi Cartera</title>
-<link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="apple-touch-icon" href="icon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="description" content="Control de entrenamientos: sesiones, grupos de ejercicios, estadísticas y progresión." />
+  <title>Gym Tracker</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#0f1115" id="theme-color-meta" />
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+  <link rel="apple-touch-icon" href="./icons/icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Gym Tracker" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- Evita FOUC del tema: aplica el tema guardado antes de pintar -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('gt-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+        var meta = document.getElementById('theme-color-meta');
+        if (meta) meta.setAttribute('content', t === 'dark' ? '#0f1115' : '#e9ebf3');
+      } catch (e) {}
+    })();
+  </script>
+
+  <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
+  <div id="app">
+    <header class="app-header" id="app-header">
+      <button class="icon-btn" id="back-btn" aria-label="Atrás" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="app-title-wrap">
+        <h1 class="app-title" id="app-title">Gym Tracker</h1>
+      </div>
+      <span aria-hidden="true"></span>
+    </header>
 
-<div class="bg-glow" id="bgGlow"></div>
+    <main id="view" class="view"></main>
 
-<div class="wrap">
-  <header>
-    <button class="btn-hamburger" id="btnDrawer" title="Menú (M)" aria-label="Abrir menú">
-      <span></span><span></span><span></span>
-    </button>
-    <div class="brand"><h1>MI CARTERA</h1></div>
-    <nav class="tabs" id="tabs"></nav>
-    <div class="actions">
-      <span class="saved" id="saved" style="display:none">✓ guardado</span>
-      <span class="save-error" id="saveError" style="display:none" title="">⚠ error al guardar</span>
-      <button class="btn-primary" id="btnAddEntry" style="display:none">+ ENTRADA</button>
-    </div>
-  </header>
+    <!-- Aviso si se abre con file:// (los ES modules y el manifest se bloquean por CORS).
+         Es un script clásico (no módulo) para que se ejecute aunque app.js esté bloqueado. -->
+    <script>
+      if (location.protocol === 'file:') {
+        document.addEventListener('DOMContentLoaded', function () {
+          var v = document.getElementById('view');
+          if (v) v.innerHTML =
+            '<div class="card" style="border-color:var(--warning);margin-top:8px">' +
+            '<h2 style="margin:0 0 8px;font-size:18px">⚠️ Sírvela por HTTP</h2>' +
+            '<p class="muted" style="margin:0 0 10px">Has abierto la app con <code>file://</code>. ' +
+            'El navegador bloquea los módulos de JavaScript y el manifest por seguridad (CORS), ' +
+            'por eso no funciona nada.</p>' +
+            '<p class="muted" style="margin:0 0 6px"><b>Solución:</b> abre una terminal en esta carpeta y ejecuta:</p>' +
+            '<pre style="background:var(--bg-elev-2);padding:12px;border-radius:10px;overflow:auto">python3 -m http.server 8000</pre>' +
+            '<p class="muted" style="margin:6px 0 0">Luego visita <b>http://localhost:8000</b> en el navegador. ' +
+            'En GitHub Pages funcionará directamente al servirse por HTTPS.</p>' +
+            '</div>';
+        });
+      }
+    </script>
 
-  <main id="main"></main>
-</div>
-
-<!-- FAB: botón flotante de nueva entrada (solo móvil, en tabs de producto) -->
-<button class="fab-entry" id="fabAddEntry" aria-label="Nueva entrada" title="Nueva entrada">
-  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-</button>
-
-<!-- Drawer lateral -->
-<div class="drawer-overlay" id="drawerOverlay"></div>
-<aside class="drawer" id="drawer">
-  <div class="drawer-head">
-    <h3>OPCIONES</h3>
-    <button class="modal-close" id="btnDrawerClose">✕</button>
+    <nav class="tabbar" id="tabbar">
+      <a class="tab" data-route="#/" href="#/">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+        <span>Inicio</span>
+      </a>
+      <a class="tab" data-route="#/reports" href="#/reports">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        <span>Informes</span>
+      </a>
+      <a class="tab" data-route="#/calendar" href="#/calendar">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        <span>Calendario</span>
+      </a>
+      <a class="tab" data-route="#/settings" href="#/settings">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Ajustes</span>
+      </a>
+    </nav>
   </div>
 
-  <div class="drawer-section">
-    <div class="drawer-section-title">PRODUCTOS</div>
-    <button class="drawer-item" id="btnNewProdDrawer">
-      <span class="di-icon">+</span>
-      <div class="di-body">
-        <div class="di-title">NUEVO PRODUCTO</div>
-        <div class="di-sub">Añadir a la cartera</div>
-      </div>
-    </button>
-  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <div class="drawer-section">
-    <div class="drawer-section-title">VISTAS</div>
-    <button class="drawer-item" id="btnResumen">
-      <span class="di-icon">≡</span>
-      <div class="di-body">
-        <div class="di-title">RESUMEN DE PRODUCTOS</div>
-        <div class="di-sub">Vista comparada de todos los productos</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnProyeccion">
-      <span class="di-icon">↗</span>
-      <div class="di-body">
-        <div class="di-title">PROYECCIÓN</div>
-        <div class="di-sub">Simulación de evolución futura</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnObjetivos">
-      <span class="di-icon">◎</span>
-      <div class="di-body">
-        <div class="di-title">OBJETIVOS</div>
-        <div class="di-sub">Gestionar metas de inversión</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnFire">
-      <span class="di-icon">△</span>
-      <div class="di-body">
-        <div class="di-title">PLAN FIRE</div>
-        <div class="di-sub">Independencia financiera</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnAsignacion">
-      <span class="di-icon">⎄</span>
-      <div class="di-body">
-        <div class="di-title">ASIGNACIÓN</div>
-        <div class="di-sub">Drift y sugerencia de aportación</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnDiff">
-      <span class="di-icon">⇔</span>
-      <div class="di-body">
-        <div class="di-title">COMPARAR SNAPSHOTS</div>
-        <div class="di-sub">Evolución entre dos puntos guardados</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnFiscal">
-      <span class="di-icon">€</span>
-      <div class="di-body">
-        <div class="di-title">FISCALIDAD</div>
-        <div class="di-sub">Simulador D-100 (plusvalías)</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnBenchmark">
-      <span class="di-icon">⚖</span>
-      <div class="di-body">
-        <div class="di-title">VS. BENCHMARK</div>
-        <div class="di-sub">¿Bates al índice (S&P 500, MSCI World…)?</div>
-      </div>
-    </button>
-  </div>
-
-  <div class="drawer-section">
-    <div class="drawer-section-title">CONFIGURACIÓN</div>
-    <button class="drawer-item" id="btnConfig">
-      <span class="di-icon">⚙</span>
-      <div class="di-body">
-        <div class="di-title">CONFIGURACIÓN</div>
-        <div class="di-sub">API keys y preferencias</div>
-      </div>
-    </button>
-  </div>
-
-  <div class="drawer-section">
-    <div class="drawer-section-title">DATOS</div>
-    <button class="drawer-item" id="btnExport">
-      <span class="di-icon">↑</span>
-      <div class="di-body">
-        <div class="di-title">EXPORTAR CSV</div>
-        <div class="di-sub">Descargar todos los datos</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnImport">
-      <span class="di-icon">↓</span>
-      <div class="di-body">
-        <div class="di-title">IMPORTAR CSV</div>
-        <div class="di-sub">Reemplazar o fusionar datos</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnExportJSON">
-      <span class="di-icon">↑</span>
-      <div class="di-body">
-        <div class="di-title">EXPORTAR JSON</div>
-        <div class="di-sub">Backup completo (productos, entradas, objetivos)</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnImportJSON">
-      <span class="di-icon">↓</span>
-      <div class="di-body">
-        <div class="di-title">IMPORTAR JSON</div>
-        <div class="di-sub">Restaurar backup completo</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnPDF">
-      <span class="di-icon">⎙</span>
-      <div class="di-body">
-        <div class="di-title">EXPORTAR PDF</div>
-        <div class="di-sub">Informe completo de la vista actual</div>
-      </div>
-    </button>
-    <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none">
-    <input type="file" id="fileImportJSON" accept=".json,application/json" style="display:none">
-  </div>
-
-  <div class="drawer-section drawer-section-kbd">
-    <div class="drawer-section-title">ATAJOS DE TECLADO</div>
-    <div class="kbd-list">
-      <div><kbd>N</kbd><span>Nueva entrada</span></div>
-      <div><kbd>E</kbd><span>Exportar CSV</span></div>
-      <div><kbd>I</kbd><span>Importar CSV</span></div>
-      <div><kbd>S</kbd><span>Snapshot</span></div>
-      <div><kbd>M</kbd><span>Menú lateral</span></div>
-      <div><kbd>P</kbd><span>Proyección</span></div>
-      <div><kbd>F</kbd><span>Plan FIRE</span></div>
-      <div><kbd>A</kbd><span>Asignación</span></div>
-      <div><kbd>C</kbd><span>Comparar snapshots</span></div>
-      <div><kbd>T</kbd><span>Fiscalidad</span></div>
-      <div><kbd>1</kbd>–<kbd>9</kbd><span>Cambiar pestaña</span></div>
-      <div><kbd>Esc</kbd><span>Cerrar diálogos</span></div>
-    </div>
-  </div>
-
-  <div class="drawer-section">
-    <div class="drawer-section-title">INFO</div>
-    <button class="drawer-item" id="btnChangelog">
-      <span class="di-icon">≡</span>
-      <div class="di-body">
-        <div class="di-title">CHANGELOG</div>
-        <div class="di-sub">Historial de versiones y almacenamiento</div>
-      </div>
-    </button>
-  </div>
-</aside>
-
-<!-- Modal entrada -->
-<div class="modal-bg" id="modalEntrada">
-  <div class="modal">
-    <div class="modal-head">
-      <div>
-        <h2 id="meTitle">NUEVA ENTRADA</h2>
-        <div class="modal-sub" id="meSub"></div>
-      </div>
-      <button class="modal-close" data-close="modalEntrada">✕</button>
-    </div>
-    <div class="field">
-      <label>MES</label>
-      <input type="month" id="meFecha">
-    </div>
-    <div class="field">
-      <label style="margin-bottom:8px">APORTACIÓN DESGLOSADA (€)</label>
-      <div class="triple">
-        <div>
-          <input type="number" step="0.01" placeholder="Manual"   id="meManual">
-          <div class="sublabel">MANUAL</div>
-        </div>
-        <div>
-          <input type="number" step="0.01" placeholder="Saveback" id="meSaveback">
-          <div class="sublabel">SAVEBACK</div>
-        </div>
-        <div>
-          <input type="number" step="0.01" placeholder="Round-up" id="meRoundup">
-          <div class="sublabel">ROUND-UP</div>
-        </div>
-      </div>
-      <div class="total-line" id="meTotal">Total: €0,00</div>
-    </div>
-    <div class="field">
-      <label>VALOR REAL ACTUAL (€)</label>
-      <input type="number" step="0.01" placeholder="4450" id="meValor">
-    </div>
-    <div class="field">
-      <label>RENTA COBRADA <span class="lbl-hint">(dividendo o cupón, este mes, opcional)</span></label>
-      <input type="number" step="0.01" placeholder="0" id="meDividendo">
-    </div>
-    <div class="field" style="margin-bottom:24px">
-      <label>NOTA DEL MES (opcional)</label>
-      <textarea rows="2" id="meNota" placeholder="Ej: corrección de mercado, aporte extra por bonus..."></textarea>
-    </div>
-    <button class="save-btn" id="meSave">GUARDAR</button>
-  </div>
-</div>
-
-
-<!-- Modal calculadora -->
-<div class="modal-bg" id="modalCalc">
-  <div class="modal modal-small">
-    <div class="modal-head">
-      <h2 id="mcTitle">CALCULADORA</h2>
-      <button class="modal-close" data-close="modalCalc">✕</button>
-    </div>
-    <div class="modal-sub" id="mcSub" style="margin-bottom:14px"></div>
-    <div class="calc-grid">
-      <div class="calc-cell">
-        <input type="number" step="any" min="0" id="mcUnidades" placeholder="0">
-        <div class="sublabel">UNIDADES</div>
-      </div>
-      <div class="calc-cell calc-op">×</div>
-      <div class="calc-cell">
-        <input type="number" step="any" min="0" id="mcPrecio" placeholder="0,00">
-        <div class="sublabel">PRECIO €/u</div>
-      </div>
-      <div class="calc-cell calc-op">=</div>
-      <div class="calc-cell">
-        <div class="calc-result" id="mcResult">—</div>
-        <div class="sublabel">VALOR</div>
-      </div>
-    </div>
-    <div class="field-hint" id="mcSource" style="text-align:center;margin-top:10px"></div>
-  </div>
-</div>
-
-<!-- Modal changelog -->
-<div class="modal-bg" id="modalChangelog">
-  <div class="modal modal-wide">
-    <div class="modal-head">
-      <h2>CHANGELOG</h2>
-      <button class="modal-close" data-close="modalChangelog">✕</button>
-    </div>
-
-    <!-- Barra de almacenamiento -->
-    <div class="storage-section" id="storageInfo">
-      <div class="storage-loading">Calculando almacenamiento…</div>
-    </div>
-
-    <!-- Entradas del changelog -->
-    <div class="cl-list">
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.8</span>
-          <span class="cl-ver-date">Junio 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li><strong>Seguridad · Service Worker</strong>: ya no se cachean las llamadas a las APIs de precios (CoinGecko, Twelve Data, Yahoo y proxies). Antes se servían cotizaciones obsoletas desde caché y se almacenaba en <code>Cache Storage</code> la URL con la API key de Twelve Data. Ahora solo se cachean los assets propios y los CDN/fuentes.</li>
-          <li><strong>Content-Security-Policy</strong>: añadida cabecera CSP (defensa en profundidad). <code>script-src</code> sin <code>'unsafe-inline'</code> impide ejecutar scripts o handlers inyectados; <code>connect-src</code> limita las conexiones a las APIs de precios usadas.</li>
-          <li><strong>Cifrado de snapshots</strong>: los puntos de restauración ahora se cifran con AES-256 cuando el cifrado está activo (antes quedaban en texto plano). Activar/desactivar cifrado y cambiar la passphrase re-cifran también los snapshots existentes.</li>
-          <li><strong>Bloqueo seguro</strong>: si se cancela el desbloqueo de una BD cifrada, la app queda en modo solo-lectura y no sobrescribe los datos cifrados con texto plano.</li>
-          <li><strong>Fix import CSV</strong>: el parser respeta comillas y saltos de línea dentro de campos, por lo que las notas multilínea sobreviven al round-trip exportar→importar.</li>
-          <li><strong>Fix entradas duplicadas</strong>: al guardar una entrada de un mes que ya existe se ofrece reemplazarla, evitando dos entradas del mismo mes (que rompían el cálculo total y el heatmap).</li>
-          <li><strong>IDs reservados</strong>: un producto importado ya no puede usar un id de vista interna (<code>total</code>, <code>fire</code>, <code>fiscal</code>, <code>config</code>…) que lo dejaría inaccesible.</li>
-          <li><strong>Menos peticiones</strong>: negative-cache para precios — un ticker o id inválido ya no reintenta la API en cada render.</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.7</span>
-          <span class="cl-ver-date">Mayo 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li><strong>Precios automáticos para ETFs vía Twelve Data</strong>: nuevo campo <kbd>TWELVE DATA TICKER</kbd> por producto (formato <code>SÍMBOLO.MIC</code>, ej. <code>IWDA.XAMS</code>, <code>EUNL.XETR</code>) con validación en vivo. Caché 10 min. Soporta separador <code>.</code> o <code>:</code>; el sufijo se envía como parámetro <code>exchange</code> separado a la API.</li>
-          <li><strong>Validación de divisa</strong>: la respuesta de Twelve Data se rechaza si la cotización no es en EUR, con mensaje específico ("Cotiza en USD, no en EUR").</li>
-          <li><strong>Nueva sección CONFIGURACIÓN</strong> en el drawer (entre VISTAS y DATOS): modal para introducir la API key de Twelve Data, persistida en IndexedDB en este dispositivo.</li>
-          <li><strong>Reorganización de KPIs</strong>: cabecera 4×2 con métricas de rentabilidad (VALOR · GANANCIA · ESTE MES · MEJOR MES · TIR · APORTACIÓN MEDIA · RACHA POSITIVA · DCA AUTOMÁTICO). Panel <em>KPIs avanzados · riesgo</em> al final con SHARPE · SORTINO · VOLATILIDAD · DRAWDOWN MÁX.</li>
-          <li>Escala de color de <strong>RACHA POSITIVA</strong>: rojo en 0 meses, ámbar 3-5, verde a partir de 6.</li>
-          <li>Fix móvil: <code>minimum-scale=1</code> y limpieza del margin negativo en tabs para evitar que el lado derecho quede vacío tras pinch-zoom.</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.6</span>
-          <span class="cl-ver-date">Mayo 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li><strong>Precios automáticos vía CoinGecko</strong>: campo <kbd>CoinGecko ID</kbd> por producto con validación en vivo + caché 5 min. Badge "precio/u · hace N min" en la cabecera del producto</li>
-          <li><strong>Unidades y precio manual</strong> por producto (para ETFs/acciones que CoinGecko no cubre)</li>
-          <li><strong>Calculadora "unidades × precio = valor"</strong> en el modal de Nueva Entrada</li>
-          <li><strong>Vista ASIGNACIÓN</strong> — atajo <kbd>A</kbd>: drift de cartera vs % objetivo por producto + simulador "Voy a aportar X €" que distribuye minimizando desviación</li>
-          <li><strong>Vista COMPARAR SNAPSHOTS</strong> — atajo <kbd>C</kbd>: diff entre dos snapshots (o snapshot vs estado actual) con delta por producto</li>
-          <li><strong>Vista FISCALIDAD</strong> — atajo <kbd>T</kbd>: simulador D-100 con tramos 2026 (19/21/23/27/28%), venta parcial por producto, compensación pérdidas/ganancias y sugerencia de tax-loss harvesting</li>
-          <li><strong>Exportar e Importar JSON</strong>: backup completo (productos con metadatos, entradas, objetivos, preferencias FIRE)</li>
-          <li>Nuevo KPI <strong>MEJOR MES</strong> y grid de KPIs reorganizado a 4×2 (más cómodo en móvil)</li>
-          <li>Panel <strong>KPIs avanzados</strong> al final de cada producto: Sortino, Aportación mensual media, Racha máx positiva, % DCA Automático</li>
-          <li>Drawer reorganizado: PRODUCTOS y VISTAS en la parte superior; ajustes de keyboard shortcuts</li>
-          <li>Mejoras móvil: tabs en 2 fila independiente con scroll, botones EDITAR/ELIMINAR agrupados, placeholder claro cuando el filtro de periodo deja menos de 2 entradas</li>
-          <li>Manifest PWA mejorado: <code>id</code>, <code>display_override</code>, <code>categories</code>, iconos <code>any</code>/<code>maskable</code> separados, meta tags iOS para instalación standalone</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.5</span>
-          <span class="cl-ver-date">Mayo 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li>Sistema de objetivos con metas por producto o cartera total y barra de progreso</li>
-          <li>KPIs: Volatilidad anualizada (×√12) y Ratio de Sharpe con tooltips explicativos</li>
-          <li>Histograma de distribución de rentabilidades mensuales (8 tramos, verde/rojo)</li>
-          <li>Changelog con barra de uso de IndexedDB</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.4</span>
-          <span class="cl-ver-date">Mayo 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li>Drag & drop para reordenar pestañas de productos, con persistencia en IndexedDB</li>
-          <li>Desglose de aportaciones en KPI VALOR ACTUAL (Manual / Saveback / Round-up)</li>
-          <li>Proyección movida al menú lateral — atajo <kbd>P</kbd></li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.3</span>
-          <span class="cl-ver-date">Mayo 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li>Migración de localStorage a IndexedDB — sin límite de ~5 MB</li>
-          <li>PWA instalable: service worker con caché offline y manifest</li>
-          <li>Snapshots in-app: hasta 20 puntos de restauración con gestión visual</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.2</span>
-          <span class="cl-ver-date">Abril 2026</span>
-        </div>
-        <ul class="cl-items">
-          <li>KPI Drawdown máximo con tooltip explicativo</li>
-          <li>Resumen fiscal anual agrupado por año</li>
-          <li>Gráfico donut de distribución de cartera (vista Total)</li>
-          <li>Tooltips en KPIs de TIR Anualizada y Drawdown Máx</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.1</span>
-          <span class="cl-ver-date">2025</span>
-        </div>
-        <ul class="cl-items">
-          <li>XIRR (Newton-Raphson) para TIR anualizada</li>
-          <li>Heatmap de rentabilidad mensual por año</li>
-          <li>Tres tipos de aportación: Manual, Saveback y Round-up</li>
-          <li>Modified Dietz para cálculo de rentabilidad mensual</li>
-          <li>Comparativa de TIR por producto (vista Total)</li>
-        </ul>
-      </div>
-
-      <div class="cl-version">
-        <div class="cl-ver-head">
-          <span class="cl-ver-tag">v1.0</span>
-          <span class="cl-ver-date">2024</span>
-        </div>
-        <ul class="cl-items">
-          <li>Seguimiento de múltiples productos de inversión</li>
-          <li>Entradas mensuales con valor real, aportación y notas</li>
-          <li>Exportación e importación CSV</li>
-          <li>Gráficos: valor vs aportado y rentabilidad acumulada</li>
-          <li>Atajos de teclado globales</li>
-          <li>Puntos de restauración (snapshots)</li>
-        </ul>
-      </div>
-
-    </div>
-  </div>
-</div>
-
-<!-- Modal objetivos -->
-<div class="modal-bg" id="modalObjetivos">
-  <div class="modal">
-    <div class="modal-head">
-      <h2>OBJETIVOS</h2>
-      <button class="modal-close" data-close="modalObjetivos">✕</button>
-    </div>
-    <div id="objList" class="obj-list"></div>
-    <div class="obj-separator"></div>
-    <div class="field">
-      <label>NOMBRE DEL OBJETIVO *</label>
-      <input type="text" id="objNombre" placeholder="Ej: Fondo de emergencia, Jubilación...">
-    </div>
-    <div class="field">
-      <label>META (€) *</label>
-      <input type="number" step="100" min="1" id="objMeta" placeholder="50000">
-    </div>
-    <div class="field" style="margin-bottom:24px">
-      <label>PRODUCTO</label>
-      <select id="objProducto"></select>
-    </div>
-    <button class="save-btn" id="objSave" disabled>AÑADIR OBJETIVO</button>
-  </div>
-</div>
-
-<!-- Modal producto -->
-<div class="modal-bg" id="modalProd">
-  <div class="modal small">
-    <div class="modal-head">
-      <h2 id="mpTitle">NUEVO PRODUCTO</h2>
-      <button class="modal-close" data-close="modalProd">✕</button>
-    </div>
-    <div class="field">
-      <label>NOMBRE <span class="lbl-req" title="Campo obligatorio">*</span></label>
-      <input type="text" id="mpNombre" placeholder="Ej: Emergentes, S&P 500, Oro...">
-    </div>
-    <div class="field">
-      <label>REFERENCIA</label>
-      <input type="text" id="mpRef" placeholder="ISIN, ticker, plataforma, broker...">
-    </div>
-    <div class="field-row">
-      <div class="field">
-        <label>TIPOLOGÍA</label>
-        <input type="text" id="mpTipologia" list="mpTipologiaList" placeholder="ETF, Criptomoneda...">
-        <datalist id="mpTipologiaList"></datalist>
-      </div>
-      <div class="field">
-        <label>DIVISA</label>
-        <input type="text" id="mpDivisa" list="mpDivisaList" placeholder="EUR" maxlength="6">
-        <datalist id="mpDivisaList"></datalist>
-      </div>
-    </div>
-    <div class="field">
-      <label>COMENTARIOS</label>
-      <textarea id="mpComentarios" rows="3" placeholder="Estrategia, riesgo, notas personales..."></textarea>
-    </div>
-    <div class="field-row field-row-2">
-      <div class="field">
-        <label>UNIDADES</label>
-        <input type="number" step="any" min="0" id="mpUnidades" placeholder="0">
-      </div>
-      <div class="field">
-        <label>PRECIO ACTUAL (€)</label>
-        <input type="number" step="any" min="0" id="mpPrecioManual" placeholder="0,00">
-      </div>
-    </div>
-    <div class="field" id="mpCoinGeckoField">
-      <label>COINGECKO ID <span class="lbl-hint">(criptomoneda)</span></label>
-      <input type="text" id="mpCoingeckoId" list="mpCoingeckoList" placeholder="bitcoin, ethereum, cardano, solana...">
-      <datalist id="mpCoingeckoList">
-        <option value="bitcoin"></option>
-        <option value="ethereum"></option>
-        <option value="cardano"></option>
-        <option value="solana"></option>
-        <option value="polkadot"></option>
-        <option value="ripple"></option>
-        <option value="dogecoin"></option>
-        <option value="binancecoin"></option>
-        <option value="tron"></option>
-        <option value="chainlink"></option>
-        <option value="avalanche-2"></option>
-        <option value="matic-network"></option>
-        <option value="litecoin"></option>
-      </datalist>
-      <div class="field-hint" id="mpCoinGeckoStatus"></div>
-    </div>
-    <div class="field" id="mpEtfField">
-      <label>ETF TICKER <span class="lbl-hint" id="mpEtfHint">(formato según provider configurado)</span></label>
-      <input type="text" id="mpEtfTicker" placeholder="IWDA.AS (Yahoo) o IWDA.XAMS (Twelve Data)...">
-      <div class="field-hint" id="mpEtfStatus"></div>
-    </div>
-    <div class="field">
-      <label>% OBJETIVO EN CARTERA <span class="lbl-hint">(para asignación)</span></label>
-      <input type="number" step="0.1" min="0" max="100" id="mpAsignacion" placeholder="0">
-    </div>
-    <div class="field" style="margin-bottom:26px">
-      <label>COLOR</label>
-      <div class="colors" id="mpColors"></div>
-    </div>
-    <button class="save-btn" id="mpSave" disabled>CREAR PRODUCTO</button>
-  </div>
-</div>
-
-<!-- Toast snapshot recordatorio -->
-<div class="toast" id="snapToast" style="display:none">
-  <div class="toast-icon">⚠</div>
-  <div class="toast-body">
-    <div class="toast-title">HACE TIEMPO QUE NO GUARDAS BACKUP</div>
-    <div class="toast-sub">Pulsa <kbd>S</kbd> o abre el menú para crear un punto de restauración</div>
-  </div>
-  <button class="toast-close" id="snapToastClose">✕</button>
-</div>
-
-<script src="app.js"></script>
+  <script type="module" src="./js/app.js"></script>
 </body>
 </html>

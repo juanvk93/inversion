@@ -228,6 +228,24 @@ async function dbAll(store) {
   });
 }
 
+// ── Almacenamiento persistente ─────────────────────────────────────────────
+// Por defecto IndexedDB es "best-effort": el navegador puede vaciarlo bajo
+// presión de espacio o tras un largo periodo de inactividad. Con persistencia
+// concedida, los datos solo se borran si el usuario lo hace explícitamente.
+async function isStoragePersisted() {
+  if (!navigator.storage?.persisted) return false;
+  try { return await navigator.storage.persisted(); }
+  catch { return false; }
+}
+
+async function requestPersistentStorage() {
+  if (!navigator.storage?.persist) return false;
+  try {
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch { return false; }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. STATE · STORAGE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4959,6 +4977,10 @@ async function renderStorageBar() {
     const { usage = 0, quota = 0 } = await navigator.storage.estimate();
     const pct      = quota > 0 ? (usage / quota) * 100 : 0;
     const fillColor = pct > 75 ? "var(--red)" : pct > 40 ? "var(--yellow)" : "var(--green)";
+    const persisted = await isStoragePersisted();
+    const persistTxt = persisted
+      ? `<span style="color:var(--green)">● Persistencia activa</span> · el navegador no borrará estos datos`
+      : `<span style="color:var(--yellow)">● Sin persistencia garantizada</span> · actívala en Configuración`;
     el.innerHTML = `
       <div class="storage-label">
         <span>INDEXEDDB · ESPACIO OCUPADO</span>
@@ -4967,7 +4989,8 @@ async function renderStorageBar() {
       <div class="storage-track">
         <div class="storage-fill" style="width:${Math.min(pct,100).toFixed(3)}%;background:${fillColor}"></div>
       </div>
-      <div class="storage-sub">${pct.toFixed(3)}% del almacenamiento de origen utilizado</div>`;
+      <div class="storage-sub">${pct.toFixed(3)}% del almacenamiento de origen utilizado</div>
+      <div class="storage-sub">${persistTxt}</div>`;
   } catch {
     el.innerHTML = `<p class="storage-na">Estimación de almacenamiento no disponible en este navegador</p>`;
   }
@@ -5456,6 +5479,11 @@ function renderConfig() {
     </div>
 
     <div class="panel">
+      <div class="panel-title">ALMACENAMIENTO PERSISTENTE</div>
+      <div id="persist-body"></div>
+    </div>
+
+    <div class="panel">
       <div class="panel-title">PUNTOS DE RESTAURACIÓN</div>
       <button class="drawer-item" id="btnSnapshot" style="width:100%">
         <span class="di-icon">⦿</span>
@@ -5486,6 +5514,9 @@ function renderConfig() {
 
   // Seguridad (cifrado)
   renderSegBody();
+
+  // Almacenamiento persistente
+  renderPersistBody();
 
   // Snapshots
   $("#btnSnapshot").onclick = crearSnapshot;
@@ -5548,6 +5579,33 @@ async function renderSegBody() {
     $("#segPass1").oninput = refresh;
     $("#segPass2").oninput = refresh;
     $("#segEnable").onclick = enableEncryption;
+  }
+}
+
+// Renderiza el bloque de almacenamiento persistente dentro de #persist-body.
+async function renderPersistBody() {
+  const body = $("#persist-body");
+  if (!body) return;
+  if (!navigator.storage?.persist) {
+    body.innerHTML = `<p class="seg-info">Este navegador no permite marcar el almacenamiento como persistente. Tus datos siguen guardándose en este dispositivo, pero el navegador podría borrarlos si necesita espacio.</p>`;
+    return;
+  }
+  const persisted = await isStoragePersisted();
+  body.innerHTML = persisted ? `
+    <div class="seg-status seg-on"><span class="seg-dot"></span> PERSISTENCIA ACTIVA</div>
+    <p class="seg-info">El navegador no borrará tus datos automáticamente por falta de espacio o inactividad. Solo se eliminarán si los borras tú o desinstalas la app.</p>
+  ` : `
+    <div class="seg-status seg-off"><span class="seg-dot"></span> SIN PERSISTENCIA GARANTIZADA</div>
+    <p class="seg-info">Tus datos se guardan en este dispositivo, pero el navegador podría borrarlos si necesita espacio o tras un largo periodo sin abrir la app.</p>
+    <button class="save-btn" id="persistEnable">ACTIVAR PERSISTENCIA</button>
+  `;
+  if (!persisted) {
+    $("#persistEnable").onclick = async () => {
+      const ok = await requestPersistentStorage();
+      renderPersistBody();
+      if (ok) flash();
+      else alert("El navegador no ha concedido la persistencia.\n\nConsejo: instala la app (Añadir a pantalla de inicio / Instalar) y vuelve a intentarlo. Muchos navegadores conceden la persistencia automáticamente a las apps instaladas.");
+    };
   }
 }
 
@@ -5636,6 +5694,10 @@ async function exportarPDF() {
   render();
   bindGlobals();
   checkSnapReminder();   // el toast de recordatorio sigue activo
+
+  // Solicitar almacenamiento persistente: evita que el navegador borre
+  // IndexedDB por falta de espacio o inactividad (fire-and-forget).
+  requestPersistentStorage().catch(() => {});
 
   // Service Worker (sólo HTTP/HTTPS; file:// no soporta SW)
   if ("serviceWorker" in navigator && location.protocol !== "file:") {

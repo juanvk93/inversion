@@ -178,6 +178,13 @@
         <div class="di-sub">Informe completo de la vista actual</div>
       </div>
     </button>
+    <button class="drawer-item" id="btnWrapped">
+      <span class="di-icon">🎁</span>
+      <div class="di-body">
+        <div class="di-title">INFORME ANUAL</div>
+        <div class="di-sub">Tu año inversor en una tarjeta exportable</div>
+      </div>
+    </button>
     <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none">
     <input type="file" id="fileImportJSON" accept=".json,application/json" style="display:none">
   </div>
@@ -195,6 +202,7 @@
       <div><kbd>A</kbd><span>Asignación</span></div>
       <div><kbd>C</kbd><span>Comparar snapshots</span></div>
       <div><kbd>T</kbd><span>Fiscalidad</span></div>
+      <div><kbd>B</kbd><span>Vs. Benchmark</span></div>
       <div><kbd>1</kbd>–<kbd>9</kbd><span>Cambiar pestaña</span></div>
       <div><kbd>Esc</kbd><span>Cerrar diálogos</span></div>
     </div>
@@ -304,6 +312,23 @@
 
     <!-- Entradas del changelog -->
     <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.9</span>
+          <span class="cl-ver-date">Julio 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Costes · TER y comisiones</strong>: nuevos campos TER (% anual) y comisión de compra por producto, con panel "COSTES" en la vista Total y por producto que estima el coste anual en € y su peso sobre la cartera.</li>
+          <li><strong>Búsqueda de tickers</strong>: autocompletado en el campo ETF TICKER del modal de producto (Twelve Data <code>symbol_search</code> o búsqueda de Yahoo según el provider activo).</li>
+          <li><strong>Sparklines en pestañas</strong>: cada tab muestra un mini-gráfico con los últimos 12 valores del producto (y del total).</li>
+          <li><strong>Logros</strong>: hitos automáticos (primer 1.000 €, un año sin fallar, cartera duplicada…) con toast de desbloqueo y panel de historial en la vista Total. Se incluyen en el backup JSON.</li>
+          <li><strong>Informe anual "wrapped"</strong>: tarjeta-resumen del año (aportado, ganancia, mejor mes, alpha vs índice) exportable como imagen PNG, desde el menú DATOS.</li>
+          <li><strong>Arranque sin Chart.js</strong>: si el CDN falla, la app funciona sin gráficos en lugar de no abrir.</li>
+          <li><strong>Fixes de cifrado</strong>: cambiar la passphrase re-cifra correctamente los snapshots; activar/desactivar el cifrado ya no deja campos sueltos que vaciaban la cartera al recargar; carga tolerante a campos corruptos con modo solo-lectura de protección.</li>
+          <li><strong>Fixes menores</strong>: el atajo <kbd>N</kbd> ya no crea entradas huérfanas desde la vista Resumen; saneado de ids externos en el import CSV; el recordatorio de backup no aparece con la app vacía.</li>
+        </ul>
+      </div>
 
       <div class="cl-version">
         <div class="cl-ver-head">
@@ -528,19 +553,43 @@
       <div class="field-hint" id="mpCoinGeckoStatus"></div>
     </div>
     <div class="field" id="mpEtfField">
-      <label>ETF TICKER <span class="lbl-hint" id="mpEtfHint">(formato según provider configurado)</span></label>
-      <input type="text" id="mpEtfTicker" placeholder="IWDA.AS (Yahoo) o IWDA.XAMS (Twelve Data)...">
+      <label>ETF TICKER <span class="lbl-hint" id="mpEtfHint">(escribe un nombre o ticker para buscar)</span></label>
+      <input type="text" id="mpEtfTicker" placeholder="IWDA, MSCI World, S&P 500..." autocomplete="off">
+      <div class="ticker-results" id="mpEtfResults" style="display:none"></div>
       <div class="field-hint" id="mpEtfStatus"></div>
     </div>
     <div class="field">
       <label>% OBJETIVO EN CARTERA <span class="lbl-hint">(para asignación)</span></label>
       <input type="number" step="0.1" min="0" max="100" id="mpAsignacion" placeholder="0">
     </div>
+    <div class="field-row field-row-2">
+      <div class="field">
+        <label>TER <span class="lbl-hint">(% anual)</span></label>
+        <input type="number" step="0.01" min="0" max="10" id="mpTer" placeholder="0,20">
+      </div>
+      <div class="field">
+        <label>COMISIÓN COMPRA <span class="lbl-hint">(€/operación)</span></label>
+        <input type="number" step="0.01" min="0" id="mpComision" placeholder="0">
+      </div>
+    </div>
     <div class="field" style="margin-bottom:26px">
       <label>COLOR</label>
       <div class="colors" id="mpColors"></div>
     </div>
     <button class="save-btn" id="mpSave" disabled>CREAR PRODUCTO</button>
+  </div>
+</div>
+
+<!-- Modal informe anual (wrapped) -->
+<div class="modal-bg" id="modalWrapped">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>INFORME ANUAL</h2>
+      <button class="modal-close" data-close="modalWrapped">✕</button>
+    </div>
+    <div class="wrapped-years" id="wrappedYears"></div>
+    <div id="wrappedCard"></div>
+    <button class="save-btn" id="wrappedDownload" style="margin-top:16px">DESCARGAR COMO IMAGEN</button>
   </div>
 </div>
 

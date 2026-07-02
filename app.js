@@ -266,6 +266,7 @@ const state = {
   editProdId:     null,
   productoColor:  COLORES[0],
   lastSnapshot:   null,
+  logros:         {},      // { [logroId]: "YYYY-MM-DD" } — fecha de desbloqueo
   // Vistas avanzadas
   asignacionAporte: 0,           // simulador de aportación en Asignación
   diffSnapA:       null,         // id del snapshot A
@@ -321,6 +322,13 @@ async function loadState() {
       }
     }
 
+    // Lectura tolerante para campos secundarios: si uno está corrupto (o quedó
+    // cifrado sin clave activa) no debe impedir cargar la cartera principal.
+    const safeRead = async (key) => {
+      try { return await readField(key); }
+      catch (err) { console.warn(`[Cartera] No se pudo leer el campo "${key}"`, err); return undefined; }
+    };
+
     // 1. Intentar leer de IndexedDB (descifrando si hay clave activa)
     const productosDB = await readField("productos");
     const entradasDB  = await readField("entradas");
@@ -329,21 +337,23 @@ async function loadState() {
       state.productos = productosDB || PRODUCTOS_INIT;
       const ents = entradasDB || {};
       state.entradas  = Object.fromEntries(Object.entries(ents).map(([k, list]) => [k, list.map(migrarEntrada)]));
-      state.objetivos = ((await readField("objetivos")) || []).map(o =>
+      state.objetivos = ((await safeRead("objetivos")) || []).map(o =>
         o.productoId === "total" ? { ...o, productoId: null } : o
       );
-      const firePrefs = await readField("firePrefs");
+      const firePrefs = await safeRead("firePrefs");
       if (firePrefs) {
         if (firePrefs.gasto != null) state.fireGasto = firePrefs.gasto;
         if (firePrefs.regla != null) state.fireRegla = firePrefs.regla;
         if (firePrefs.inflacion != null) state.inflacion = firePrefs.inflacion;
       }
-      const tdKey = await readField("twelveDataApiKey");
+      const tdKey = await safeRead("twelveDataApiKey");
       if (typeof tdKey === "string") state.twelveDataApiKey = tdKey;
-      const etfProv = await readField("etfProvider");
+      const etfProv = await safeRead("etfProvider");
       if (ETF_PROVIDERS.includes(etfProv)) state.etfProvider = etfProv;
-      const bench = await readField("benchmarkSymbol");
+      const bench = await safeRead("benchmarkSymbol");
       if (typeof bench === "string" && bench) state.benchmarkSymbol = bench;
+      const logros = await safeRead("logros");
+      if (logros && typeof logros === "object") state.logros = logros;
       // Migración: twelveDataTicker → etfTicker (campo genérico)
       state.productos.forEach(p => {
         if (p.twelveDataTicker && !p.etfTicker) p.etfTicker = p.twelveDataTicker;
@@ -367,9 +377,14 @@ async function loadState() {
 
     state.lastSnapshot = (await dbGet(DB_KV, "lastSnapshot")) || localStorage.getItem(STORE_K_SNAP) || null;
   } catch (err) {
-    console.warn("[Cartera] Error cargando estado, usando datos iniciales", err);
-    state.productos = PRODUCTOS_INIT;
-    state.entradas  = ENTRADAS_INIT;
+    // Fallo leyendo la cartera principal: bloqueamos las escrituras para NO
+    // sobrescribir con estado vacío los datos que sí siguen en IndexedDB.
+    console.error("[Cartera] Error cargando estado — modo solo lectura", err);
+    _locked = true;
+    state.productos = [];
+    state.entradas  = {};
+    state.objetivos = [];
+    alert("Error al cargar los datos guardados. La app queda en modo solo lectura para protegerlos; recarga la página para reintentar.");
   }
   state.tab = state.productos[0]?.id || "total";
 }
@@ -411,6 +426,7 @@ function saveState() {
       await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
       await writeField("etfProvider", state.etfProvider || "twelvedata");
       await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
+      await writeField("logros", state.logros || {});
       hideSaveError();
     })
     .catch(err => {
@@ -878,6 +894,80 @@ function calcStreakTotal() {
   return streakMeses([...set].sort().reverse());
 }
 
+// ── Logros (hitos automáticos) ─────────────────────────────────────────────
+// Cada logro define una condición sobre el estado agregado de la cartera.
+// Los desbloqueados se guardan en state.logros con su fecha (no se pierden
+// aunque la condición deje de cumplirse, p. ej. si la cartera baja de 10k).
+const LOGROS_DEF = [
+  { id: "primera_entrada", icon: "🌱", t: "PRIMER PASO",        d: "Registrar tu primera entrada",         c: x => x.mesesHist >= 1 },
+  { id: "valor_1k",        icon: "💶", t: "PRIMEROS 1.000 €",   d: "La cartera alcanza 1.000 €",           c: x => x.valor >= 1000 },
+  { id: "valor_10k",       icon: "💰", t: "CLUB DE LOS 10K",    d: "La cartera alcanza 10.000 €",          c: x => x.valor >= 10000 },
+  { id: "valor_25k",       icon: "🏆", t: "25.000 €",           d: "La cartera alcanza 25.000 €",          c: x => x.valor >= 25000 },
+  { id: "valor_50k",       icon: "🚀", t: "RUMBO A 100K",       d: "La cartera alcanza 50.000 €",          c: x => x.valor >= 50000 },
+  { id: "valor_100k",      icon: "👑", t: "SEIS CIFRAS",        d: "La cartera alcanza 100.000 €",         c: x => x.valor >= 100000 },
+  { id: "streak_6",        icon: "🔥", t: "MEDIO AÑO SIN FALLAR", d: "6 meses seguidos aportando",         c: x => x.streak >= 6 },
+  { id: "streak_12",       icon: "🗓️", t: "UN AÑO SIN FALLAR",  d: "12 meses seguidos aportando",          c: x => x.streak >= 12 },
+  { id: "ganancia_1k",     icon: "📈", t: "GANANCIA 1.000 €",   d: "La ganancia acumulada supera 1.000 €", c: x => x.ganancia >= 1000 },
+  { id: "duplicada",       icon: "✨", t: "CARTERA DUPLICADA",  d: "El valor duplica lo aportado",         c: x => x.aportado > 0 && x.valor >= 2 * x.aportado },
+  { id: "diversificado",   icon: "🧺", t: "DIVERSIFICADO",      d: "3 o más productos con datos",          c: x => x.prodConDatos >= 3 },
+  { id: "primer_dividendo",icon: "💧", t: "RENTA PASIVA",       d: "Primer dividendo o cupón cobrado",     c: x => x.dividendos > 0 },
+  { id: "ano_historial",   icon: "📚", t: "HISTORIAL SÓLIDO",   d: "12 meses de historial registrados",    c: x => x.mesesHist >= 12 },
+];
+
+function checkLogros() {
+  if (_locked) return;
+  const filasTot = statsTotalCalc();
+  const ultima   = filasTot.at(-1);
+  if (!ultima) return;
+  const ctx = {
+    valor:        ultima.valor,
+    aportado:     ultima.acumAportado,
+    ganancia:     ultima.ganancia,
+    dividendos:   ultima.acumDividendos || 0,
+    mesesHist:    filasTot.length,
+    streak:       calcStreakTotal(),
+    prodConDatos: state.productos.filter(p => (state.entradas[p.id] || []).length).length,
+  };
+  if (!state.logros) state.logros = {};
+  const nuevos = LOGROS_DEF.filter(l => !state.logros[l.id] && l.c(ctx));
+  if (!nuevos.length) return;
+  const fecha = new Date().toISOString().slice(0, 10);
+  nuevos.forEach(l => { state.logros[l.id] = fecha; });
+  saveState();
+  nuevos.forEach((l, i) => setTimeout(() => showLogroToast(l), i * 4600));
+}
+
+function showLogroToast(l) {
+  const el = document.createElement("div");
+  el.className = "logro-toast";
+  el.innerHTML = `<span class="logro-toast-icon">${l.icon}</span>
+    <div>
+      <div class="logro-toast-tit">¡LOGRO DESBLOQUEADO!</div>
+      <div class="logro-toast-sub">${esc(l.t)} — ${esc(l.d)}</div>
+    </div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 400); }, 4200);
+}
+
+function renderLogrosPanel() {
+  const logros = state.logros || {};
+  const n = LOGROS_DEF.filter(l => logros[l.id]).length;
+  return `<div class="panel" style="margin-top:28px">
+    <div class="panel-title">LOGROS · ${n}/${LOGROS_DEF.length}</div>
+    <div class="logros-grid">
+      ${LOGROS_DEF.map(l => {
+        const f = logros[l.id];
+        return `<div class="logro ${f ? "unlocked" : "locked"}" title="${esc(l.d)}">
+          <div class="logro-icon">${l.icon}</div>
+          <div class="logro-tit">${l.t}</div>
+          <div class="logro-sub">${f ? `✓ ${esc(f)}` : esc(l.d)}</div>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
 // Tramos IRPF de la base del ahorro (España, vigentes 2025-2026).
 // Aplica a plusvalías y rendimientos del capital mobiliario.
 const TRAMOS_AHORRO_ES = [
@@ -905,6 +995,35 @@ function calcImpuestoPlusvalia(ganancia) {
 function tipoMedioEfectivo(ganancia) {
   if (ganancia <= 0) return 0;
   return calcImpuestoPlusvalia(ganancia) / ganancia;
+}
+
+// Coste anual estimado por producto: TER × valor actual + comisión de compra ×
+// nº de aportaciones de los últimos 12 meses. Solo productos con algún coste definido.
+function calcCostes() {
+  const items = state.productos.map(p => {
+    const ter = +p.ter || 0;
+    const com = +p.comisionCompra || 0;
+    if (ter <= 0 && com <= 0) return null;
+    const ents  = [...(state.entradas[p.id] || [])].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const ult   = ents.at(-1);
+    const valor = ult?.valor || 0;
+    const desde = ult ? calcCutoff(ult.fecha, "1y") : null;
+    const nAport12m = ents.filter(e => (!desde || e.fecha >= desde) && aportTotal(e) > 0).length;
+    const costeTer = valor * ter / 100;
+    const costeCom = nAport12m * com;
+    return { id: p.id, nombre: p.nombre, color: p.color, valor, ter, com, nAport12m, costeTer, costeCom, coste: costeTer + costeCom };
+  }).filter(Boolean);
+  const valorCartera = state.productos.reduce((s, p) => {
+    const ents = [...(state.entradas[p.id] || [])].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return s + (ents.at(-1)?.valor || 0);
+  }, 0);
+  const costeTotal  = items.reduce((s, i) => s + i.coste, 0);
+  const conTer      = items.filter(i => i.ter > 0 && i.valor > 0);
+  const valorConTer = conTer.reduce((s, i) => s + i.valor, 0);
+  const terPonderado = valorConTer > 0
+    ? conTer.reduce((s, i) => s + i.valor * i.ter, 0) / valorConTer
+    : null;
+  return { items, costeTotal, terPonderado, valorCartera };
 }
 
 // Devuelve la fecha de corte (YYYY-MM) para un periodo dado tomando como
@@ -943,7 +1062,7 @@ const CSV_HEADERS = [
   // Metadatos de producto (se repiten en cada fila del producto; en import basta la 1ª)
   "producto_referencia","producto_tipologia","producto_divisa","producto_color",
   "producto_unidades","producto_precio_manual","producto_coingecko","producto_etf_ticker",
-  "producto_asignacion",
+  "producto_asignacion","producto_ter","producto_comision",
 ];
 
 function escCSV(v) {
@@ -993,6 +1112,7 @@ function generarCSV() {
       escCSV(p.referencia || ""), escCSV(p.tipologia || ""), escCSV(p.divisa || ""),
       escCSV(p.color || ""), p.unidades || 0, p.precioManual || 0,
       escCSV(p.coingeckoId || ""), escCSV(p.etfTicker || ""), p.asignacionObjetivo || 0,
+      p.ter || 0, p.comisionCompra || 0,
     ];
     const lista = state.entradas[p.id] || [];
     if (lista.length) {
@@ -1044,7 +1164,8 @@ function importarCSV(texto) {
         iDiv  = idx("producto_divisa"),      iCol = idx("producto_color"),
         iUni  = idx("producto_unidades"),    iPrM = idx("producto_precio_manual"),
         iCg   = idx("producto_coingecko"),   iEtf = idx("producto_etf_ticker"),
-        iAsg  = idx("producto_asignacion");
+        iAsg  = idx("producto_asignacion"),  iTer = idx("producto_ter"),
+        iCom  = idx("producto_comision");
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
 
   const prodMap = {};
@@ -1066,9 +1187,11 @@ function importarCSV(texto) {
         color:              colorVal,
         unidades:           iUni >= 0 ? num(c[iUni]) : 0,
         precioManual:       iPrM >= 0 ? num(c[iPrM]) : 0,
-        coingeckoId:        iCg  >= 0 ? (c[iCg]  || "").trim().toLowerCase() : "",
-        etfTicker:          iEtf >= 0 ? (c[iEtf] || "").trim().toUpperCase() : "",
+        coingeckoId:        iCg  >= 0 ? (c[iCg]  || "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "") : "",
+        etfTicker:          iEtf >= 0 ? (c[iEtf] || "").trim().toUpperCase().replace(/[^A-Z0-9.:^-]/g, "") : "",
         asignacionObjetivo: iAsg >= 0 ? Math.max(0, Math.min(100, num(c[iAsg]))) : 0,
+        ter:                iTer >= 0 ? Math.max(0, Math.min(10, num(c[iTer]))) : 0,
+        comisionCompra:     iCom >= 0 ? num(c[iCom]) : 0,
       };
       ents[pid] = [];
     }
@@ -1158,6 +1281,8 @@ function generarJSON() {
       coingeckoId:        p.coingeckoId || "",
       etfTicker:          p.etfTicker || "",
       asignacionObjetivo: Number.isFinite(+p.asignacionObjetivo) ? +p.asignacionObjetivo : 0,
+      ter:                Number.isFinite(+p.ter) ? +p.ter : 0,
+      comisionCompra:     Number.isFinite(+p.comisionCompra) ? +p.comisionCompra : 0,
     })),
     entradas: Object.fromEntries(
       Object.entries(state.entradas).map(([pid, list]) => [
@@ -1185,6 +1310,7 @@ function generarJSON() {
       regla: state.fireRegla,
       inflacion: state.inflacion,
     },
+    logros: state.logros || {},
     config: {
       etfProvider:      state.etfProvider || "twelvedata",
       twelveDataApiKey: state.twelveDataApiKey || "",
@@ -1243,6 +1369,8 @@ function importarJSON(texto) {
       coingeckoId:        String(p.coingeckoId || "").toLowerCase().replace(/[^a-z0-9-]/g, ""),
       etfTicker:          String(p.etfTicker || p.twelveDataTicker || "").toUpperCase().replace(/[^A-Z0-9.:^-]/g, ""),
       asignacionObjetivo: Math.max(0, Math.min(100, num(p.asignacionObjetivo))),
+      ter:                Math.max(0, Math.min(10, num(p.ter))),
+      comisionCompra:     num(p.comisionCompra),
     };
   });
   const idsValidos = new Set(productos.map(p => p.id));
@@ -1313,7 +1441,15 @@ function importarJSON(texto) {
     };
   }
 
-  return { productos, entradas, objetivos, firePrefs, config, descartadas };
+  // Logros (opcional)
+  const logros = {};
+  if (raw.logros && typeof raw.logros === "object") {
+    Object.entries(raw.logros).forEach(([k, v]) => {
+      if (typeof v === "string" && /^[a-z0-9_-]{1,40}$/i.test(k)) logros[k] = v.slice(0, 10);
+    });
+  }
+
+  return { productos, entradas, objetivos, firePrefs, config, logros, descartadas };
 }
 
 function handleImportJSON(file) {
@@ -1342,6 +1478,7 @@ function handleImportJSON(file) {
         if (data.firePrefs.regla != null) state.fireRegla = data.firePrefs.regla;
         if (data.firePrefs.inflacion != null) state.inflacion = data.firePrefs.inflacion;
       }
+      state.logros = data.logros || {};
       state.tab = state.productos[0]?.id || "total";
     } else {
       const ids = new Set(state.productos.map(p => p.id));
@@ -1354,6 +1491,9 @@ function handleImportJSON(file) {
       });
       const objIds = new Set((state.objetivos || []).map(o => o.id));
       data.objetivos.forEach(o => { if (!objIds.has(o.id)) state.objetivos.push(o); });
+      Object.entries(data.logros || {}).forEach(([k, v]) => {
+        if (!state.logros[k]) state.logros[k] = v;
+      });
     }
     // Configuración: se aplica en ambos modos (reemplazar y fusionar)
     if (data.config) {
@@ -1529,7 +1669,11 @@ async function renderSnapshots() {
 
 function showSnapToast() { $("#snapToast").style.display = "flex"; }
 function hideSnapToast() { $("#snapToast").style.display = "none"; }
-function checkSnapReminder() { if (diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast(); }
+function checkSnapReminder() {
+  // Solo tiene sentido recordar el backup si hay algo que respaldar
+  const hayDatos = state.productos.some(p => (state.entradas[p.id] || []).length);
+  if (hayDatos && diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 5c. PRECIOS · CoinGecko (cripto) + Twelve Data/Yahoo (ETFs) + precio manual
@@ -1836,10 +1980,17 @@ function priceSourceLabel(source) {
 // 6. CHARTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-Chart.defaults.color       = "#374151";
-Chart.defaults.font.family = "monospace";
-Chart.defaults.font.size   = 10;
-Chart.defaults.borderColor = "rgba(255,255,255,0.04)";
+// Si el CDN de Chart.js falla (primera visita offline, red corporativa…), la app
+// debe seguir funcionando sin gráficos en lugar de reventar el IIFE completo.
+const CHARTS_OK = typeof Chart !== "undefined";
+if (CHARTS_OK) {
+  Chart.defaults.color       = "#374151";
+  Chart.defaults.font.family = "monospace";
+  Chart.defaults.font.size   = 10;
+  Chart.defaults.borderColor = "rgba(255,255,255,0.04)";
+} else {
+  console.warn("[Cartera] Chart.js no disponible — la app funciona sin gráficos");
+}
 
 function destroyChart(key)   { if (charts[key]) { charts[key].destroy(); delete charts[key]; } }
 function destroyAllCharts()  { Object.keys(charts).forEach(destroyChart); }
@@ -1888,7 +2039,7 @@ const TOOLTIP_BASE = {
 
 function drawChartValor(filas, accent) {
   const ctx = $("#chartValor")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   // Anotaciones: puntos destacados donde hay nota
   const notas = filas.map(f => f.nota ? f.valor : null);
   const tieneNotas = notas.some(v => v != null);
@@ -2001,7 +2152,7 @@ function drawChartValor(filas, accent) {
 
 function drawChartMonteCarlo(labels, percs, aportado) {
   const ctx = $("#chartMC")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   const purpA = (a) => `rgba(167,139,250,${a})`;
   charts.mc = new Chart(ctx, {
     type: "line",
@@ -2030,7 +2181,7 @@ function drawChartMonteCarlo(labels, percs, aportado) {
 
 function drawChartRent(filas, accent) {
   const ctx = $("#chartRent")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   // Relleno respecto a 0%: verde en ganancia, rojo en pérdida
   const GAN_FILL = "rgba(52,211,153,0.16)";
   const PER_FILL = "rgba(248,113,113,0.15)";
@@ -2064,7 +2215,7 @@ function drawChartRent(filas, accent) {
 
 function drawChartTirComp(data) {
   const ctx = $("#chartTirComp")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   charts.tirComp = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2100,7 +2251,7 @@ function drawChartTirComp(data) {
 
 function drawChartProy(labels, datasets) {
   const ctx = $("#chartProy")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   charts.proy = new Chart(ctx, {
     type: "line",
     data: { labels, datasets },
@@ -2131,7 +2282,7 @@ const HIST_BUCKETS = [
 
 function drawChartHistograma(filas) {
   const ctx = $("#chartHist")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   const rents = filas.filter(f => f.rentMes != null).map(f => f.rentMes);
   if (!rents.length) return;
   const counts = HIST_BUCKETS.map(b => rents.filter(r => r >= b.min && r < b.max).length);
@@ -2159,7 +2310,7 @@ function drawChartHistograma(filas) {
 
 function drawChartPeso(data) {
   const ctx = $("#chartPeso")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
 
   const cs        = getComputedStyle(document.documentElement);
   const textColor = (cs.getPropertyValue("--text")   || "").trim() || "#E2E8F0";
@@ -2251,7 +2402,7 @@ function drawChartPeso(data) {
 // Crecimiento normalizado (base 100 = aportado). 100 = empate, >100 ganancia, <100 pérdida.
 function drawChartGrowth(data) {
   const ctx = $("#chartGrowth")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   // Añadimos una línea horizontal de referencia en 100 (base = aportado)
   const refLength = data.labels.length;
   const dataWithRef = {
@@ -2302,7 +2453,7 @@ function drawChartGrowth(data) {
 // Contribución a la ganancia (€) por producto — barra horizontal.
 function drawChartContribucion(items) {
   const ctx = $("#chartContrib")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   charts.contrib = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2338,7 +2489,7 @@ function drawChartContribucion(items) {
 // Aportaciones por año (Manual / Saveback / Round-up) — barras horizontales apiladas.
 function drawChartAportPorAno(years) {
   const ctx = $("#chartAportYear")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   charts.aportYear = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2434,8 +2585,11 @@ function renderTabs() {
     const style   = active
       ? `--accent:${t.color};color:${t.color}`
       : `color:${t.color}`;
+    // Mini-gráfico de "salud" (últimos 12 valores) junto al nombre del tab
+    const vals  = t.id === "total" ? statsTotalCalc().map(f => f.valor) : valoresProducto(t.id);
+    const spark = sparkline(vals.slice(-12), t.color);
     return `<button class="tab ${active} ${extra}" ${drag} data-tab="${esc(t.id)}" style="${style}">
-      ${esc(t.nombre.toUpperCase())}
+      ${spark}${esc(t.nombre.toUpperCase())}
     </button>`;
   }).join("");
   $("#tabs").innerHTML = html;
@@ -2564,8 +2718,7 @@ function render() {
   renderTabs();
 
   const btnAdd = $("#btnAddEntry");
-  const reservados = new Set(["total", "resumen", "proyeccion", "fire", "asignacion", "diff", "fiscal", "benchmark", "config"]);
-  const esProd = !reservados.has(state.tab);
+  const esProd = !RESERVED_IDS.has(state.tab);
   btnAdd.style.display    = esProd ? "inline-block" : "none";
   btnAdd.style.background = accent;
   btnAdd.onclick          = () => openEntryModal();
@@ -2590,6 +2743,8 @@ function render() {
   else if (state.tab === "benchmark")  result = renderBenchmark();
   else if (state.tab === "config")     result = renderConfig();
   else                                  result = renderTabActual();
+  // Hitos automáticos: se evalúan tras cada render (barato, stats cacheadas)
+  checkLogros();
   // Fetch async de precios CoinGecko + re-render si llega algo
   refreshAllPricesAsync();
   return result;
@@ -2599,6 +2754,11 @@ function renderTabActual() {
   const accent   = getAccentColor();
   const esTotal  = state.tab === "total";
   const prod     = state.productos.find(p => p.id === state.tab);
+  if (!esTotal && !prod) {   // tab huérfano (producto eliminado/no importado)
+    state.tab = "total";
+    render();
+    return;
+  }
   const filasFull = esTotal ? statsTotalCalc() : calcStats(state.entradas[state.tab] || []);
   // Filtro temporal: solo afecta display (tablas, charts, heatmap).
   // Las KPIs siguen usando la última entrada para mantener "VALOR ACTUAL" coherente.
@@ -2895,7 +3055,9 @@ function renderTabActual() {
   else         html += renderTablaProd(filas, accent, ultima);
 
   html += renderResumenFiscal(filas);
+  html += renderCostesPanel(esTotal);
   html += renderKpisExtra(filasFull, ultima, tirActual);
+  if (esTotal) html += renderLogrosPanel();
 
   $("#main").innerHTML = html;
   bindCommon();
@@ -3124,6 +3286,42 @@ function renderResumenFiscal(filas) {
     <div class="panel-title">RESUMEN FISCAL ANUAL</div>
     <div class="table">${head}${rows}</div>
     ${simVenta}
+  </div>`;
+}
+
+// Panel "COSTES · TER Y COMISIONES". En Total muestra todos los productos con
+// coste definido + fila de total; en un producto, solo su fila.
+function renderCostesPanel(esTotal) {
+  const { items, costeTotal, terPonderado, valorCartera } = calcCostes();
+  const visibles = esTotal ? items : items.filter(i => i.id === state.tab);
+  if (!visibles.length) return "";
+  const sumVisible = visibles.reduce((s, i) => s + i.coste, 0);
+  const base       = esTotal ? valorCartera : (visibles[0].valor || 0);
+  const pctCoste   = base > 0 ? (sumVisible / base) * 100 : 0;
+  const rows = visibles.map(i => `
+    <div class="costes-row">
+      <span><span class="asig-dot" style="background:${i.color}"></span>${esc(i.nombre)}</span>
+      <span class="right">${i.ter > 0 ? `${fmt(i.ter)}%` : "—"}</span>
+      <span class="right">${i.costeTer > 0 ? fmtE(i.costeTer) : "—"}</span>
+      <span class="right">${i.costeCom > 0 ? `${fmtE(i.costeCom)} · ${i.nAport12m} op.` : "—"}</span>
+      <span class="right bold" style="color:var(--red)">${fmtE(i.coste)}</span>
+    </div>`).join("");
+  const totalRow = esTotal && visibles.length > 1 ? `
+    <div class="costes-row costes-total">
+      <span>TOTAL${terPonderado != null ? ` · TER medio ${fmt(terPonderado)}%` : ""}</span>
+      <span class="right"></span><span class="right"></span><span class="right"></span>
+      <span class="right bold" style="color:var(--red)">${fmtE(costeTotal)}</span>
+    </div>` : "";
+  const tip = "Coste anual estimado: TER × valor actual + comisión de compra × aportaciones de los últimos 12 meses. Define TER y comisión en el modal de cada producto. Un 1% de coste anual puede comerse ~25% de la ganancia final a 30 años.";
+  return `<div class="panel" style="margin-top:28px">
+    <div class="panel-title">COSTES · TER Y COMISIONES<span class="kpi-info" tabindex="0" role="button" aria-label="Cómo se calcula" data-tip="${esc(tip)}">i</span></div>
+    <div class="costes-scroll"><div class="costes-table">
+      <div class="costes-row costes-head">
+        <span>PRODUCTO</span><span class="right">TER</span><span class="right">TER €/AÑO</span><span class="right">COMISIONES 12M</span><span class="right">COSTE/AÑO</span>
+      </div>
+      ${rows}${totalRow}
+    </div></div>
+    <p class="costes-foot">Equivale al ${fmt(pctCoste)}% ${esTotal ? "de la cartera" : "del producto"} cada año.</p>
   </div>`;
 }
 
@@ -4632,7 +4830,7 @@ function renderBenchmarkSync(data, bench) {
 
 function drawChartBenchmark(labels, cartera, indice, nombreIdx, accent) {
   const ctx = $("#chartBench")?.getContext("2d");
-  if (!ctx) return;
+  if (!ctx || !CHARTS_OK) return;
   charts.bench = new Chart(ctx, {
     type: "line",
     data: {
@@ -4666,11 +4864,10 @@ function drawChartBenchmark(labels, cartera, indice, nombreIdx, accent) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function openEntryModal(entry = null) {
-  if (state.tab === "total" || state.tab === "proyeccion" || state.tab === "fire"
-      || state.tab === "asignacion" || state.tab === "diff" || state.tab === "fiscal"
-      || state.tab === "benchmark" || state.tab === "config") return;
+  if (RESERVED_IDS.has(state.tab)) return;
+  const prod = state.productos.find(p => p.id === state.tab);
+  if (!prod) return;   // tab huérfano: no crear entradas sin producto
   state.editEntradaId = entry?.id || null;
-  const prod   = state.productos.find(p => p.id === state.tab);
   const accent = getAccentColor();
 
   $("#meTitle").textContent     = entry ? "EDITAR ENTRADA" : "NUEVA ENTRADA";
@@ -4710,6 +4907,11 @@ function saveEntry() {
     nota:      ($("#meNota").value || "").trim(),
   };
   const pid   = state.tab;
+  // Nunca guardar entradas bajo un id de vista interna o de producto inexistente
+  if (RESERVED_IDS.has(pid) || !state.productos.some(p => p.id === pid)) {
+    $("#modalEntrada").classList.remove("open");
+    return;
+  }
   const lista = state.entradas[pid] || [];
   let base    = state.editEntradaId ? lista.filter(x => x.id !== state.editEntradaId) : lista;
   // Evitar dos entradas del mismo mes (rompe el cálculo total y el heatmap, que
@@ -4739,6 +4941,9 @@ function openProdModal(prod = null) {
   $("#mpCoingeckoId").value   = prod?.coingeckoId   || "";
   $("#mpEtfTicker").value     = prod?.etfTicker || "";
   $("#mpAsignacion").value    = prod?.asignacionObjetivo ?? "";
+  $("#mpTer").value           = prod?.ter || "";
+  $("#mpComision").value      = prod?.comisionCompra || "";
+  renderTickerResults([]);
   $("#mpCoinGeckoStatus").textContent = "";
   $("#mpEtfStatus").textContent       = "";
   $("#mpTipologiaList").innerHTML = TIPOLOGIAS.map(t => `<option value="${esc(t)}"></option>`).join("");
@@ -4807,6 +5012,64 @@ async function verifyEtfTicker(ticker) {
   }
 }
 
+// ── Búsqueda de tickers (autocompletado en el modal de producto) ───────────
+// Con provider Twelve Data (y API key) usa /symbol_search y construye el ticker
+// en formato SYMBOL.MIC; con Yahoo usa su endpoint de búsqueda vía los mismos
+// proxies CORS que los precios. Devuelve [{ticker, nombre, detalle}].
+async function searchTickers(q) {
+  q = (q || "").trim();
+  if (q.length < 2) return [];
+  const apiKey = (state.twelveDataApiKey || "").trim();
+  if (state.etfProvider !== "yahoo" && apiKey) {
+    try {
+      const url = `https://api.twelvedata.com/symbol_search?symbol=${encodeURIComponent(q)}&outputsize=12&apikey=${encodeURIComponent(apiKey)}`;
+      const r = await fetch(url, { headers: { accept: "application/json" } });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return (data?.data || []).slice(0, 8).map(d => ({
+        ticker:  d.mic_code ? `${d.symbol}.${d.mic_code}` : (d.symbol || ""),
+        nombre:  d.instrument_name || "",
+        detalle: [d.exchange || d.mic_code, d.currency].filter(Boolean).join(" · "),
+      })).filter(i => i.ticker);
+    } catch { return []; }
+  }
+  // Yahoo Finance search (sin clave, vía proxy)
+  const target = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
+  for (const proxy of YAHOO_PROXIES) {
+    try {
+      const r = await fetch(proxy(target), { headers: { accept: "application/json" } });
+      if (!r.ok) continue;
+      const text = await r.text();
+      if (!text.trimStart().startsWith("{")) continue;
+      const data = JSON.parse(text);
+      return (data?.quotes || []).filter(x => x.symbol).slice(0, 8).map(x => ({
+        ticker:  x.symbol,
+        nombre:  x.shortname || x.longname || "",
+        detalle: [x.exchDisp || x.exchange, x.quoteTypeDisp || x.quoteType].filter(Boolean).join(" · "),
+      }));
+    } catch { /* siguiente proxy */ }
+  }
+  return [];
+}
+
+function renderTickerResults(items) {
+  const box = $("#mpEtfResults");
+  if (!box) return;
+  if (!items || !items.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+  box.innerHTML = items.map(i => `
+    <button type="button" class="ticker-item" data-ticker="${esc(i.ticker)}">
+      <span class="ti-sym">${esc(i.ticker)}</span>
+      <span class="ti-name">${esc(i.nombre)}</span>
+      <span class="ti-meta">${esc(i.detalle)}</span>
+    </button>`).join("");
+  box.style.display = "block";
+  $$("#mpEtfResults .ticker-item").forEach(b => b.onclick = () => {
+    $("#mpEtfTicker").value = b.dataset.ticker;
+    renderTickerResults([]);
+    verifyEtfTicker(b.dataset.ticker);
+  });
+}
+
 function renderColorPicker() {
   $("#mpColors").innerHTML = COLORES.map(c =>
     `<button class="color-btn ${state.productoColor===c?"active":""}" style="background:${c}" data-c="${c}"></button>`
@@ -4842,6 +5105,9 @@ function saveProd() {
   const etfTicker    = $("#mpEtfTicker").value.trim().toUpperCase();
   const asignRaw     = parseFloat($("#mpAsignacion").value);
   const asignacion   = Number.isFinite(asignRaw) ? Math.max(0, Math.min(100, asignRaw)) : 0;
+  const terRaw       = parseFloat($("#mpTer").value);
+  const ter          = Number.isFinite(terRaw) ? Math.max(0, Math.min(10, terRaw)) : 0;
+  const comisionCompra = numOrZero("#mpComision");
   if (state.editProdId) {
     const prod = state.productos.find(p => p.id === state.editProdId);
     if (prod) {
@@ -4856,6 +5122,8 @@ function saveProd() {
       prod.coingeckoId        = coingeckoId;
       prod.etfTicker          = etfTicker;
       prod.asignacionObjetivo = asignacion;
+      prod.ter                = ter;
+      prod.comisionCompra     = comisionCompra;
     }
   } else {
     const id = `prod_${Date.now()}`;
@@ -4864,6 +5132,7 @@ function saveProd() {
       color: state.productoColor,
       unidades, precioManual, coingeckoId, etfTicker,
       asignacionObjetivo: asignacion,
+      ter, comisionCompra,
     });
     state.entradas[id] = [];
     state.tab          = id;
@@ -4882,7 +5151,7 @@ function openObjetivosModal() {
   sel.innerHTML = [
     { id: "total", nombre: "Cartera Total" },
     ...state.productos,
-  ].map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("");
+  ].map(p => `<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join("");
   const ctx = RESERVED_IDS.has(state.tab) && state.tab !== "total" ? "total" : state.tab;
   sel.value = ctx;
   $("#objNombre").value = "";
@@ -5020,6 +5289,8 @@ async function enableEncryption() {
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
+    await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
+    await writeField("logros", state.logros || {});
     await reencryptSnapshots(null, _cryptoKey);   // cifrar snapshots existentes
     renderSegBody();
     flash();
@@ -5045,6 +5316,8 @@ async function disableEncryption() {
     await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion }, "firePrefs");
     await dbPut(DB_KV, state.twelveDataApiKey || "", "twelveDataApiKey");
     await dbPut(DB_KV, state.etfProvider || "twelvedata", "etfProvider");
+    await dbPut(DB_KV, state.benchmarkSymbol || "EUNL.DE", "benchmarkSymbol");
+    await dbPut(DB_KV, state.logros || {}, "logros");
     renderSegBody();
     flash();
     alert("✓ Cifrado desactivado.");
@@ -5074,6 +5347,9 @@ async function changePassphrase() {
   if (nueva !== confirma) { alert("Las passphrases no coinciden."); return; }
   try {
     await awaitSave();
+    // La clave de sesión actual es con la que están cifrados KV y snapshots;
+    // hay que capturarla ANTES de sustituirla por la nueva.
+    const oldKey  = _cryptoKey;
     const newSalt = genSalt();
     _cryptoKey    = await deriveKey(nueva, newSalt);
     await dbPut(DB_KV, { enabled: true, salt: Array.from(newSalt) }, "encMeta");
@@ -5083,7 +5359,9 @@ async function changePassphrase() {
     await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
     await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
     await writeField("etfProvider", state.etfProvider || "twelvedata");
-    await reencryptSnapshots(key, _cryptoKey);   // re-cifrar snapshots con la nueva clave
+    await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
+    await writeField("logros", state.logros || {});
+    await reencryptSnapshots(oldKey, _cryptoKey);   // re-cifrar snapshots con la nueva clave
     renderSegBody();
     flash();
     alert("✓ Passphrase cambiada.");
@@ -5168,10 +5446,9 @@ function handleShortcut(e) {
 
   const k = e.key.toLowerCase();
 
-  const _reservadosShortcut = new Set(["total", "proyeccion", "fire", "asignacion", "diff", "fiscal", "benchmark", "config"]);
   switch (k) {
     case "n":
-      if (!_reservadosShortcut.has(state.tab)) {
+      if (!RESERVED_IDS.has(state.tab)) {
         e.preventDefault(); openEntryModal();
       }
       break;
@@ -5355,15 +5632,23 @@ function bindGlobals() {
       coinTimer = setTimeout(() => verifyCoinGeckoId(v), 600);
     };
   }
-  // Validación ETF ticker (provider activo · Yahoo o Twelve Data)
+  // Validación ETF ticker (provider activo · Yahoo o Twelve Data) + búsqueda
   if ($("#mpEtfTicker")) {
     let etfTimer = null;
+    let searchSeq = 0;   // descarta respuestas de búsqueda llegadas fuera de orden
     $("#mpEtfTicker").oninput = () => {
       clearTimeout(etfTimer);
-      const v = $("#mpEtfTicker").value.trim().toUpperCase();
+      const raw = $("#mpEtfTicker").value.trim();
+      const v   = raw.toUpperCase();
       $("#mpEtfStatus").textContent = v ? "…" : "";
       $("#mpEtfStatus").className = "field-hint";
-      etfTimer = setTimeout(() => verifyEtfTicker(v), 600);
+      if (!raw) renderTickerResults([]);
+      etfTimer = setTimeout(async () => {
+        verifyEtfTicker(v);
+        const seq = ++searchSeq;
+        const res = await searchTickers(raw);
+        if (seq === searchSeq && $("#modalProd").classList.contains("open")) renderTickerResults(res);
+      }, 600);
     };
   }
 
@@ -5372,6 +5657,9 @@ function bindGlobals() {
 
   // PDF export (lazy-load de libs)
   $("#btnPDF").onclick = exportarPDF;
+
+  // Informe anual "wrapped"
+  $("#btnWrapped").onclick = abrirWrapped;
 
   // Configuración (página · tema, proveedor, seguridad, snapshots)
   $("#btnConfig").onclick = () => { state.tab = "config"; closeDrawer(); render(); };
@@ -5615,9 +5903,11 @@ function applyTheme(tema) {
   if (tema === "light") root.classList.add("light");
   else                  root.classList.remove("light");
   // Chart.js: actualizar colores de ejes/tooltip
-  const isLight = tema === "light";
-  Chart.defaults.color       = isLight ? "#6B7280" : "#374151";
-  Chart.defaults.borderColor = isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.04)";
+  if (CHARTS_OK) {
+    const isLight = tema === "light";
+    Chart.defaults.color       = isLight ? "#6B7280" : "#374151";
+    Chart.defaults.borderColor = isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.04)";
+  }
 }
 
 function toggleTheme() {
@@ -5679,6 +5969,153 @@ async function exportarPDF() {
     alert("No se pudo generar el PDF: " + (err?.message || err));
   } finally {
     if (btn && orig) btn.querySelector(".di-title").textContent = orig;
+  }
+}
+
+// ── Informe anual "wrapped" ────────────────────────────────────────────────
+// Tarjeta-resumen del año (aportado, ganancia, rentabilidad, mejor mes, alpha
+// vs índice) exportable como imagen PNG vía html2canvas.
+
+function calcWrapped(year) {
+  const todas = statsTotalCalc();
+  const filas = todas.filter(f => f.fecha.startsWith(year));
+  if (!filas.length) return null;
+  const prev     = todas.filter(f => f.fecha < `${year}-01`).at(-1) || null;
+  const aportado = filas.reduce((s, f) => s + f.aportacion, 0);
+  const valorIni = prev?.valor || 0;
+  const valorFin = filas.at(-1).valor;
+  const ganancia = valorFin - valorIni - aportado;   // ganancia de mercado del año
+  const conRent  = filas.filter(f => f.rentMes != null);
+  const mejor    = conRent.length ? conRent.reduce((a, b) => (b.rentMes > a.rentMes ? b : a)) : null;
+  const rentAno  = conRent.length
+    ? (conRent.reduce((acc, f) => acc * (1 + f.rentMes / 100), 1) - 1) * 100
+    : null;
+  const mesesAportando = filas.filter(f => f.aportacion > 0).length;
+  const dividendos     = filas.reduce((s, f) => s + (f.dividendo || 0), 0);
+  return { year, filas, prev, aportado, valorIni, valorFin, ganancia, mejor, rentAno, mesesAportando, dividendos };
+}
+
+function abrirWrapped() {
+  const years = [...new Set(statsTotalCalc().map(f => f.fecha.slice(0, 4)))].sort().reverse();
+  if (!years.length) { alert("Aún no hay datos para generar el informe anual."); return; }
+  closeDrawer();
+  renderWrapped(years, years[0]);
+  $("#modalWrapped").classList.add("open");
+}
+
+let _wrappedYear = null;   // año actualmente pintado (descarta respuestas obsoletas del índice)
+
+function renderWrapped(years, year) {
+  _wrappedYear = year;
+  $("#wrappedYears").innerHTML = years.map(y =>
+    `<button class="wrapped-year ${y === year ? "active" : ""}" data-wyear="${esc(y)}">${esc(y)}</button>`
+  ).join("");
+  $$("[data-wyear]").forEach(b => b.onclick = () => renderWrapped(years, b.dataset.wyear));
+
+  const w = calcWrapped(year);
+  if (!w) { $("#wrappedCard").innerHTML = ""; return; }
+  const gCol = w.ganancia >= 0 ? "#34D399" : "#F87171";
+  const bench = BENCHMARKS.find(b => b.id === state.benchmarkSymbol) || BENCHMARKS[0];
+  $("#wrappedCard").innerHTML = `
+    <div class="wrapped">
+      <div class="wrapped-head">
+        <div class="wrapped-brand">MI CARTERA</div>
+        <div class="wrapped-year-big">${esc(year)}</div>
+        <div class="wrapped-tagline">TU AÑO INVERSOR</div>
+      </div>
+      <div class="wrapped-grid">
+        <div class="wrapped-stat">
+          <div class="ws-l">APORTADO</div>
+          <div class="ws-v">${fmtE(w.aportado)}</div>
+          <div class="ws-s">${w.mesesAportando} ${w.mesesAportando === 1 ? "mes" : "meses"} aportando</div>
+        </div>
+        <div class="wrapped-stat">
+          <div class="ws-l">GANANCIA DEL AÑO</div>
+          <div class="ws-v" style="color:${gCol}">${w.ganancia >= 0 ? "+" : ""}${fmtE(w.ganancia)}</div>
+          <div class="ws-s">${w.rentAno != null ? `${w.rentAno >= 0 ? "+" : ""}${fmt(w.rentAno)}% de rentabilidad` : "revalorización de mercado"}</div>
+        </div>
+        <div class="wrapped-stat">
+          <div class="ws-l">VALOR FINAL</div>
+          <div class="ws-v">${fmtE(w.valorFin)}</div>
+          <div class="ws-s">${w.valorIni > 0 ? `desde ${fmtE(w.valorIni)}` : "primer año"}</div>
+        </div>
+        <div class="wrapped-stat">
+          <div class="ws-l">MEJOR MES</div>
+          <div class="ws-v" style="color:#34D399">${w.mejor ? `${w.mejor.rentMes >= 0 ? "+" : ""}${fmt(w.mejor.rentMes)}%` : "—"}</div>
+          <div class="ws-s">${w.mejor ? esc(labelMes(w.mejor.fecha)) : "sin datos suficientes"}</div>
+        </div>
+        <div class="wrapped-stat">
+          <div class="ws-l">ALPHA VS ÍNDICE</div>
+          <div class="ws-v" id="wrappedAlpha">…</div>
+          <div class="ws-s" id="wrappedAlphaSub">vs ${esc(bench.nombre)} · calculando</div>
+        </div>
+        ${w.dividendos > 0 ? `
+        <div class="wrapped-stat">
+          <div class="ws-l">RENTAS COBRADAS</div>
+          <div class="ws-v" style="color:#34D399">${fmtE(w.dividendos)}</div>
+          <div class="ws-s">dividendos y cupones</div>
+        </div>` : ""}
+      </div>
+      <div class="wrapped-foot">Generado con MI CARTERA · ${esc(new Date().toLocaleDateString("es-ES"))}</div>
+    </div>`;
+  $("#wrappedDownload").onclick = () => descargarWrappedPNG(year);
+
+  // Alpha vs índice: rentabilidad del año de la cartera (composición de rentMes,
+  // time-weighted) menos la del índice en los mismos meses.
+  fetchYahooSeries(bench.id).then(data => {
+    if (_wrappedYear !== year) return;   // el usuario cambió de año mientras cargaba
+    const el = $("#wrappedAlpha");
+    const sub = $("#wrappedAlphaSub");
+    if (!el) return;   // usuario cerró el modal
+    if (!data?.serie || w.rentAno == null) {
+      el.textContent = "—";
+      if (sub) sub.textContent = `vs ${bench.nombre} · no disponible`;
+      return;
+    }
+    const yms = Object.keys(data.serie).sort();
+    const precioEn = (ym) => { let best = null; for (const k of yms) { if (k <= ym) best = data.serie[k]; else break; } return best; };
+    const primerMes = w.filas[0].fecha;
+    const mesAnterior = (() => { let [y, m] = primerMes.split("-").map(Number); m--; if (m < 1) { m = 12; y--; } return `${y}-${String(m).padStart(2, "0")}`; })();
+    const ini = precioEn(w.prev ? w.prev.fecha : mesAnterior) ?? precioEn(primerMes);
+    const fin = precioEn(w.filas.at(-1).fecha);
+    if (!ini || !fin) {
+      el.textContent = "—";
+      if (sub) sub.textContent = `vs ${bench.nombre} · sin serie del año`;
+      return;
+    }
+    const rentIdx = (fin / ini - 1) * 100;
+    const alpha   = w.rentAno - rentIdx;
+    el.textContent  = `${alpha >= 0 ? "+" : ""}${fmt(alpha)} pp`;
+    el.style.color  = alpha >= 0 ? "#34D399" : "#F87171";
+    if (sub) sub.textContent = `vs ${bench.nombre} (${rentIdx >= 0 ? "+" : ""}${fmt(rentIdx)}%)`;
+  });
+}
+
+async function descargarWrappedPNG(year) {
+  const card = $("#wrappedCard .wrapped");
+  if (!card) return;
+  const btn = $("#wrappedDownload");
+  const orig = btn.textContent;
+  try {
+    btn.textContent = "GENERANDO…";
+    await ensurePDFLibs();   // incluye html2canvas
+    const canvas = await html2canvas(card, { backgroundColor: null, scale: 2, logging: false });
+    canvas.toBlob(blob => {
+      if (!blob) { alert("No se pudo generar la imagen."); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mi-cartera-wrapped-${year}.png`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+      flash();
+    }, "image/png");
+  } catch (err) {
+    console.error("[Cartera] Error generando wrapped", err);
+    alert("No se pudo generar la imagen: " + (err?.message || err));
+  } finally {
+    btn.textContent = orig;
   }
 }
 

@@ -1935,3 +1935,117 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   .scen-grid > div { display: flex; justify-content: space-between; align-items: baseline; }
   .scen-grid .l    { margin-bottom: 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v1.9 · costes, búsqueda de tickers, logros, informe anual (wrapped)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Búsqueda de tickers (modal producto) ───────────────────────────────── */
+.ticker-results {
+  margin-top: 6px; border: 1px solid var(--panel-b); border-radius: 10px;
+  overflow: hidden; background: var(--bg);
+  max-height: 220px; overflow-y: auto;
+}
+.ticker-item {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline;
+  width: 100%; text-align: left; padding: 9px 12px; cursor: pointer;
+  background: none; border: none; border-bottom: 1px solid var(--panel-b);
+  font-family: monospace;
+}
+.ticker-item:last-child { border-bottom: none; }
+.ticker-item:hover { background: var(--accent-soft, rgba(255,255,255,0.04)); }
+.ticker-item .ti-sym  { font-size: 12px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.ticker-item .ti-name { font-size: 11px; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticker-item .ti-meta { font-size: 9px;  color: var(--dimmer); white-space: nowrap; }
+
+/* ── Panel de costes (TER + comisiones) ─────────────────────────────────── */
+.costes-scroll { overflow-x: auto; }
+.costes-table  { min-width: 560px; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.costes-row {
+  display: grid; grid-template-columns: 2fr 0.7fr 1fr 1.4fr 1fr; gap: 8px;
+  align-items: center; padding: 8px 10px;
+  font-family: monospace; font-size: 11px; color: var(--mute);
+  background: var(--panel); border-radius: 8px;
+}
+.costes-row .right { text-align: right; }
+.costes-row .bold  { font-weight: 700; }
+.costes-row.costes-head  { background: none; color: var(--dimmer); font-size: 9px; letter-spacing: 1px; padding-bottom: 2px; }
+.costes-row.costes-total { border-top: 1px solid var(--panel-b); background: none; color: var(--text); font-weight: 700; }
+.costes-foot { margin-top: 10px; font-family: monospace; font-size: 10px; color: var(--dimmer); }
+
+/* ── Logros ─────────────────────────────────────────────────────────────── */
+.logros-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px; margin-top: 10px;
+}
+.logro {
+  padding: 14px 12px; border-radius: 12px; text-align: center;
+  border: 1px solid var(--panel-b); background: var(--panel);
+}
+.logro.unlocked { border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.06); }
+.logro.locked   { opacity: 0.45; filter: grayscale(1); }
+.logro-icon { font-size: 22px; margin-bottom: 6px; }
+.logro-tit  { font-family: monospace; font-size: 9px; letter-spacing: 1px; color: var(--text); margin-bottom: 4px; }
+.logro.unlocked .logro-tit { color: var(--gold); }
+.logro-sub  { font-family: monospace; font-size: 9px; color: var(--dimmer); }
+
+.logro-toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 60;
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; border-radius: 14px;
+  background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4);
+  backdrop-filter: blur(20px); max-width: 320px;
+  opacity: 0; transform: translateY(12px); transition: all .35s ease;
+}
+.logro-toast.show { opacity: 1; transform: translateY(0); }
+.logro-toast-icon { font-size: 24px; flex-shrink: 0; }
+.logro-toast-tit  { font-family: monospace; font-size: 10px; letter-spacing: 1.5px; color: var(--gold); margin-bottom: 3px; }
+.logro-toast-sub  { font-family: monospace; font-size: 10px; color: var(--mute); }
+
+/* ── Informe anual (wrapped) ────────────────────────────────────────────── */
+.wrapped-years { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.wrapped-year {
+  font-family: monospace; font-size: 11px; letter-spacing: 1px;
+  padding: 6px 14px; border-radius: 50px; cursor: pointer;
+  background: none; border: 1px solid var(--panel-b); color: var(--mute);
+}
+.wrapped-year.active { border-color: var(--gold); color: var(--gold); background: rgba(251,191,36,0.08); }
+
+/* La tarjeta usa colores fijos (independientes del tema): se exporta como imagen */
+.wrapped {
+  background: linear-gradient(150deg, #1E1B4B 0%, #0F172A 55%, #082032 100%);
+  border: 1px solid rgba(167,139,250,0.35);
+  border-radius: 20px; padding: 28px 26px; color: #E2E8F0;
+  position: relative; overflow: hidden;
+}
+.wrapped::before {
+  content: ""; position: absolute; top: -70px; right: -70px;
+  width: 220px; height: 220px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(167,139,250,0.28), transparent 70%);
+  pointer-events: none;
+}
+.wrapped-head { text-align: center; margin-bottom: 22px; position: relative; }
+.wrapped-brand {
+  font-family: monospace; font-size: 10px; letter-spacing: 4px; color: #A78BFA;
+}
+.wrapped-year-big {
+  font-family: 'Bebas Neue', sans-serif; font-size: 64px; line-height: 1;
+  color: #FBBF24; margin: 6px 0 2px;
+}
+.wrapped-tagline { font-family: monospace; font-size: 10px; letter-spacing: 3px; color: #6B7280; }
+.wrapped-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; position: relative; }
+.wrapped-stat {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px; padding: 14px;
+}
+.wrapped-stat .ws-l { font-family: monospace; font-size: 9px; letter-spacing: 1.5px; color: #6B7280; margin-bottom: 6px; }
+.wrapped-stat .ws-v { font-family: 'Bebas Neue', sans-serif; font-size: 26px; line-height: 1; color: #E2E8F0; }
+.wrapped-stat .ws-s { font-family: monospace; font-size: 9px; color: #9CA3AF; margin-top: 5px; }
+.wrapped-foot {
+  margin-top: 20px; text-align: center; position: relative;
+  font-family: monospace; font-size: 9px; letter-spacing: 2px; color: #4B5563;
+}
+@media (max-width: 480px) {
+  .wrapped-grid { grid-template-columns: 1fr; }
+  .wrapped-year-big { font-size: 52px; }
+}

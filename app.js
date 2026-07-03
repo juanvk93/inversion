@@ -899,35 +899,83 @@ function calcStreakTotal() {
 // Los desbloqueados se guardan en state.logros con su fecha (no se pierden
 // aunque la condición deje de cumplirse, p. ej. si la cartera baja de 10k).
 const LOGROS_DEF = [
-  { id: "primera_entrada", icon: "🌱", t: "PRIMER PASO",        d: "Registrar tu primera entrada",         c: x => x.mesesHist >= 1 },
-  { id: "valor_1k",        icon: "💶", t: "PRIMEROS 1.000 €",   d: "La cartera alcanza 1.000 €",           c: x => x.valor >= 1000 },
-  { id: "valor_10k",       icon: "💰", t: "CLUB DE LOS 10K",    d: "La cartera alcanza 10.000 €",          c: x => x.valor >= 10000 },
-  { id: "valor_25k",       icon: "🏆", t: "25.000 €",           d: "La cartera alcanza 25.000 €",          c: x => x.valor >= 25000 },
-  { id: "valor_50k",       icon: "🚀", t: "RUMBO A 100K",       d: "La cartera alcanza 50.000 €",          c: x => x.valor >= 50000 },
-  { id: "valor_100k",      icon: "👑", t: "SEIS CIFRAS",        d: "La cartera alcanza 100.000 €",         c: x => x.valor >= 100000 },
-  { id: "streak_6",        icon: "🔥", t: "MEDIO AÑO SIN FALLAR", d: "6 meses seguidos aportando",         c: x => x.streak >= 6 },
-  { id: "streak_12",       icon: "🗓️", t: "UN AÑO SIN FALLAR",  d: "12 meses seguidos aportando",          c: x => x.streak >= 12 },
-  { id: "ganancia_1k",     icon: "📈", t: "GANANCIA 1.000 €",   d: "La ganancia acumulada supera 1.000 €", c: x => x.ganancia >= 1000 },
-  { id: "duplicada",       icon: "✨", t: "CARTERA DUPLICADA",  d: "El valor duplica lo aportado",         c: x => x.aportado > 0 && x.valor >= 2 * x.aportado },
-  { id: "diversificado",   icon: "🧺", t: "DIVERSIFICADO",      d: "3 o más productos con datos",          c: x => x.prodConDatos >= 3 },
-  { id: "primer_dividendo",icon: "💧", t: "RENTA PASIVA",       d: "Primer dividendo o cupón cobrado",     c: x => x.dividendos > 0 },
-  { id: "ano_historial",   icon: "📚", t: "HISTORIAL SÓLIDO",   d: "12 meses de historial registrados",    c: x => x.mesesHist >= 12 },
+  // Constancia
+  { id: "primera_entrada", grupo: "CONSTANCIA", icon: "🌱", t: "PRIMER PASO",        d: "Registrar tu primera entrada",          c: x => x.mesesHist >= 1 },
+  { id: "streak_3",        grupo: "CONSTANCIA", icon: "🔂", t: "ARRANCANDO",         d: "3 meses seguidos aportando",            c: x => x.streak >= 3 },
+  { id: "streak_6",        grupo: "CONSTANCIA", icon: "🔥", t: "MEDIO AÑO EN RACHA", d: "6 meses seguidos aportando",            c: x => x.streak >= 6 },
+  { id: "streak_12",       grupo: "CONSTANCIA", icon: "🗓️", t: "UN AÑO SIN FALLAR",  d: "12 meses seguidos aportando",           c: x => x.streak >= 12 },
+  { id: "streak_24",       grupo: "CONSTANCIA", icon: "⏳", t: "DOS AÑOS DE HIERRO", d: "24 meses seguidos aportando",           c: x => x.streak >= 24 },
+  { id: "ano_historial",   grupo: "CONSTANCIA", icon: "📚", t: "HISTORIAL SÓLIDO",   d: "12 meses de historial registrados",     c: x => x.mesesHist >= 12 },
+  { id: "bianual",         grupo: "CONSTANCIA", icon: "📖", t: "VETERANO",           d: "24 meses de historial registrados",     c: x => x.mesesHist >= 24 },
+
+  // Patrimonio
+  { id: "valor_1k",        grupo: "PATRIMONIO", icon: "💶", t: "PRIMEROS 1.000 €",   d: "La cartera alcanza 1.000 €",            c: x => x.valor >= 1000 },
+  { id: "valor_5k",        grupo: "PATRIMONIO", icon: "💵", t: "5.000 €",            d: "La cartera alcanza 5.000 €",            c: x => x.valor >= 5000 },
+  { id: "valor_10k",       grupo: "PATRIMONIO", icon: "💰", t: "CLUB DE LOS 10K",    d: "La cartera alcanza 10.000 €",           c: x => x.valor >= 10000 },
+  { id: "valor_25k",       grupo: "PATRIMONIO", icon: "🏦", t: "25.000 €",           d: "La cartera alcanza 25.000 €",           c: x => x.valor >= 25000 },
+  { id: "valor_50k",       grupo: "PATRIMONIO", icon: "🚀", t: "RUMBO A 100K",       d: "La cartera alcanza 50.000 €",           c: x => x.valor >= 50000 },
+  { id: "valor_100k",      grupo: "PATRIMONIO", icon: "👑", t: "SEIS CIFRAS",        d: "La cartera alcanza 100.000 €",          c: x => x.valor >= 100000 },
+  { id: "valor_250k",      grupo: "PATRIMONIO", icon: "💎", t: "CUARTO DE MILLÓN",   d: "La cartera alcanza 250.000 €",          c: x => x.valor >= 250000 },
+
+  // Rentabilidad
+  { id: "ganancia_1k",     grupo: "RENTABILIDAD", icon: "📈", t: "GANANCIA 1.000 €",  d: "La ganancia acumulada supera 1.000 €",  c: x => x.ganancia >= 1000 },
+  { id: "ganancia_10k",    grupo: "RENTABILIDAD", icon: "📊", t: "GANANCIA 10.000 €", d: "La ganancia acumulada supera 10.000 €", c: x => x.ganancia >= 10000 },
+  { id: "duplicada",       grupo: "RENTABILIDAD", icon: "✨", t: "CARTERA DUPLICADA", d: "El valor duplica lo aportado",          c: x => x.aportado > 0 && x.valor >= 2 * x.aportado },
+  { id: "triplicada",      grupo: "RENTABILIDAD", icon: "🌟", t: "CARTERA TRIPLICADA",d: "El valor triplica lo aportado",         c: x => x.aportado > 0 && x.valor >= 3 * x.aportado },
+  { id: "tir_10",          grupo: "RENTABILIDAD", icon: "⚡", t: "DOS DÍGITOS",       d: "TIR anualizada por encima del 10%",     c: x => x.tir != null && x.tir >= 0.10 },
+  { id: "mejor_mes_10",    grupo: "RENTABILIDAD", icon: "🎢", t: "MES ESTELAR",       d: "Un mes con más de +10% de rentabilidad",c: x => x.mejorRentMes != null && x.mejorRentMes >= 10 },
+  { id: "racha_pos_6",     grupo: "RENTABILIDAD", icon: "☀️", t: "VIENTO A FAVOR",    d: "6 meses seguidos cerrando en positivo", c: x => x.rachaPositiva >= 6 },
+
+  // Diversificación
+  { id: "diversificado",   grupo: "DIVERSIFICACIÓN", icon: "🧺", t: "DIVERSIFICADO",  d: "3 o más productos con datos",           c: x => x.prodConDatos >= 3 },
+  { id: "muy_divers",      grupo: "DIVERSIFICACIÓN", icon: "🌍", t: "CARTERA GLOBAL", d: "5 o más productos con datos",           c: x => x.prodConDatos >= 5 },
+  { id: "asignacion_100",  grupo: "DIVERSIFICACIÓN", icon: "🎯", t: "PLAN DEFINIDO",  d: "Asignación objetivo que suma 100%",     c: x => x.sumAsignacion >= 99.5 && x.sumAsignacion <= 100.5 },
+
+  // Rentas
+  { id: "primer_dividendo",grupo: "RENTAS", icon: "💧", t: "RENTA PASIVA",     d: "Primer dividendo o cupón cobrado",       c: x => x.dividendos > 0 },
+  { id: "dividendos_1k",   grupo: "RENTAS", icon: "🌊", t: "LLUVIA DE RENTAS", d: "1.000 € cobrados en dividendos/cupones", c: x => x.dividendos >= 1000 },
+
+  // Gestión
+  { id: "objetivo_1",      grupo: "GESTIÓN", icon: "🏁", t: "META CUMPLIDA",    d: "Completar tu primer objetivo",                 c: x => x.objetivosCompletados >= 1 },
+  { id: "objetivo_3",      grupo: "GESTIÓN", icon: "🥇", t: "TRIPLE CORONA",    d: "Completar 3 objetivos",                        c: x => x.objetivosCompletados >= 3 },
+  { id: "dca_auto_50",     grupo: "GESTIÓN", icon: "🤖", t: "PILOTO AUTOMÁTICO",d: "Más del 50% aportado vía Saveback + Round-up", c: x => x.dcaAuto != null && x.dcaAuto >= 50 },
 ];
 
-function checkLogros() {
-  if (_locked) return;
+// Reúne todas las métricas agregadas que evalúan las condiciones de los logros.
+function logrosContext() {
   const filasTot = statsTotalCalc();
   const ultima   = filasTot.at(-1);
-  if (!ultima) return;
-  const ctx = {
+  if (!ultima) return null;
+  // Valor actual por contexto (total + cada producto), para contar objetivos cumplidos.
+  const valByPid = { total: ultima.valor };
+  state.productos.forEach(p => {
+    valByPid[p.id] = calcStats(state.entradas[p.id] || []).at(-1)?.valor || 0;
+  });
+  const objetivosCompletados = (state.objetivos || []).filter(o => {
+    const v = (o.productoId == null || o.productoId === "total") ? valByPid.total : (valByPid[o.productoId] || 0);
+    return o.meta > 0 && v >= o.meta;
+  }).length;
+  return {
     valor:        ultima.valor,
     aportado:     ultima.acumAportado,
     ganancia:     ultima.ganancia,
     dividendos:   ultima.acumDividendos || 0,
     mesesHist:    filasTot.length,
     streak:       calcStreakTotal(),
+    rachaPositiva: calcRachaMaxPositiva(filasTot),
     prodConDatos: state.productos.filter(p => (state.entradas[p.id] || []).length).length,
+    tir:          filasTot.length >= 2 ? calcTIR(filasTot) : null,
+    mejorRentMes: calcMejorMes(filasTot)?.rentMes ?? null,
+    dcaAuto:      calcDCAAutomatico(ultima),
+    sumAsignacion: state.productos.reduce((s, p) => s + (+p.asignacionObjetivo || 0), 0),
+    objetivosCompletados,
   };
+}
+
+function checkLogros() {
+  if (_locked) return;
+  const ctx = logrosContext();
+  if (!ctx) return;
   if (!state.logros) state.logros = {};
   const nuevos = LOGROS_DEF.filter(l => !state.logros[l.id] && l.c(ctx));
   if (!nuevos.length) return;
@@ -935,6 +983,8 @@ function checkLogros() {
   nuevos.forEach(l => { state.logros[l.id] = fecha; });
   saveState();
   nuevos.forEach((l, i) => setTimeout(() => showLogroToast(l), i * 4600));
+  // Si el modal de logros está abierto, refrescar para reflejar los nuevos.
+  if ($("#modalLogros")?.classList.contains("open")) renderLogrosModal();
 }
 
 function showLogroToast(l) {
@@ -950,22 +1000,51 @@ function showLogroToast(l) {
   setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 400); }, 4200);
 }
 
-function renderLogrosPanel() {
+function abrirLogros() {
+  closeDrawer();
+  renderLogrosModal();
+  $("#modalLogros").classList.add("open");
+}
+
+function renderLogrosModal() {
+  const body = $("#logrosBody");
+  if (!body) return;
   const logros = state.logros || {};
-  const n = LOGROS_DEF.filter(l => logros[l.id]).length;
-  return `<div class="panel" style="margin-top:28px">
-    <div class="panel-title">LOGROS · ${n}/${LOGROS_DEF.length}</div>
-    <div class="logros-grid">
-      ${LOGROS_DEF.map(l => {
-        const f = logros[l.id];
-        return `<div class="logro ${f ? "unlocked" : "locked"}" title="${esc(l.d)}">
-          <div class="logro-icon">${l.icon}</div>
-          <div class="logro-tit">${l.t}</div>
-          <div class="logro-sub">${f ? `✓ ${esc(f)}` : esc(l.d)}</div>
-        </div>`;
-      }).join("")}
-    </div>
+  const total  = LOGROS_DEF.length;
+  const n      = LOGROS_DEF.filter(l => logros[l.id]).length;
+  const pct    = total ? (n / total) * 100 : 0;
+
+  // Agrupar por categoría preservando el orden de definición
+  const grupos = [];
+  LOGROS_DEF.forEach(l => {
+    let g = grupos.find(x => x.nombre === l.grupo);
+    if (!g) { g = { nombre: l.grupo, items: [] }; grupos.push(g); }
+    g.items.push(l);
+  });
+
+  $("#logrosCount").textContent = `${n}/${total}`;
+  const barra = `<div class="logros-progress">
+    <div class="logros-progress-track"><div class="logros-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
+    <div class="logros-progress-label">${n} de ${total} logros desbloqueados · ${pct.toFixed(0)}%</div>
   </div>`;
+
+  const secciones = grupos.map(g => {
+    const desbl = g.items.filter(l => logros[l.id]).length;
+    const cards = g.items.map(l => {
+      const f = logros[l.id];
+      return `<div class="logro ${f ? "unlocked" : "locked"}" title="${esc(l.d)}">
+        <div class="logro-icon">${l.icon}</div>
+        <div class="logro-tit">${esc(l.t)}</div>
+        <div class="logro-sub">${f ? `✓ ${esc(f)}` : esc(l.d)}</div>
+      </div>`;
+    }).join("");
+    return `<div class="logros-group">
+      <div class="logros-group-title">${esc(g.nombre)} <span class="logros-group-count">${desbl}/${g.items.length}</span></div>
+      <div class="logros-grid">${cards}</div>
+    </div>`;
+  }).join("");
+
+  body.innerHTML = barra + secciones;
 }
 
 // Tramos IRPF de la base del ahorro (España, vigentes 2025-2026).
@@ -2553,25 +2632,6 @@ function setAccentVars(color) {
 let _dragId = null;
 let _touchDragHappened = false;
 
-// Sparkline SVG inline para el dot del tab. Valores: array de valores numéricos.
-function sparkline(values, color, w = 38, h = 12) {
-  if (!values || values.length < 2) return `<span class="dot" style="background:${color}"></span>`;
-  const min   = Math.min(...values);
-  const max   = Math.max(...values);
-  const range = max - min || 1;
-  const dx    = w / (values.length - 1);
-  const pts   = values.map((v, i) => `${(i*dx).toFixed(1)},${(h - (v-min)/range*h).toFixed(1)}`).join(" ");
-  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
-    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
-  </svg>`;
-}
-
-function valoresProducto(pid) {
-  return [...(state.entradas[pid] || [])]
-    .sort((a,b) => a.fecha.localeCompare(b.fecha))
-    .map(e => e.valor || 0);
-}
-
 function renderTabs() {
   const tabs = [
     { id: "total", nombre: "Total", color: "#FBBF24" },
@@ -2585,11 +2645,8 @@ function renderTabs() {
     const style   = active
       ? `--accent:${t.color};color:${t.color}`
       : `color:${t.color}`;
-    // Mini-gráfico de "salud" (últimos 12 valores) junto al nombre del tab
-    const vals  = t.id === "total" ? statsTotalCalc().map(f => f.valor) : valoresProducto(t.id);
-    const spark = sparkline(vals.slice(-12), t.color);
     return `<button class="tab ${active} ${extra}" ${drag} data-tab="${esc(t.id)}" style="${style}">
-      ${spark}${esc(t.nombre.toUpperCase())}
+      ${esc(t.nombre.toUpperCase())}
     </button>`;
   }).join("");
   $("#tabs").innerHTML = html;
@@ -3057,7 +3114,6 @@ function renderTabActual() {
   html += renderResumenFiscal(filas);
   html += renderCostesPanel(esTotal);
   html += renderKpisExtra(filasFull, ultima, tirActual);
-  if (esTotal) html += renderLogrosPanel();
 
   $("#main").innerHTML = html;
   bindCommon();
@@ -5594,6 +5650,7 @@ function bindGlobals() {
   $("#btnDiff").onclick          = () => { state.tab = "diff"; closeDrawer(); render(); };
   $("#btnFiscal").onclick        = () => { state.tab = "fiscal"; closeDrawer(); render(); };
   $("#btnBenchmark").onclick     = () => { state.tab = "benchmark"; closeDrawer(); render(); };
+  $("#btnLogros").onclick        = abrirLogros;
   $("#btnChangelog").onclick     = openChangelog;
   $("#btnNewProdDrawer").onclick = openProdModal;
 

@@ -128,6 +128,13 @@
         <div class="di-sub">¿Bates al índice (S&P 500, MSCI World…)?</div>
       </div>
     </button>
+    <button class="drawer-item" id="btnLogros">
+      <span class="di-icon">🏅</span>
+      <div class="di-body">
+        <div class="di-title">LOGROS</div>
+        <div class="di-sub">Hitos e insignias de tu progreso</div>
+      </div>
+    </button>
   </div>
 
   <div class="drawer-section">
@@ -179,7 +186,7 @@
       </div>
     </button>
     <button class="drawer-item" id="btnWrapped">
-      <span class="di-icon">🎁</span>
+      <span class="di-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg></span>
       <div class="di-body">
         <div class="di-title">INFORME ANUAL</div>
         <div class="di-sub">Tu año inversor en una tarjeta exportable</div>
@@ -321,8 +328,7 @@
         <ul class="cl-items">
           <li><strong>Costes · TER y comisiones</strong>: nuevos campos TER (% anual) y comisión de compra por producto, con panel "COSTES" en la vista Total y por producto que estima el coste anual en € y su peso sobre la cartera.</li>
           <li><strong>Búsqueda de tickers</strong>: autocompletado en el campo ETF TICKER del modal de producto (Twelve Data <code>symbol_search</code> o búsqueda de Yahoo según el provider activo).</li>
-          <li><strong>Sparklines en pestañas</strong>: cada tab muestra un mini-gráfico con los últimos 12 valores del producto (y del total).</li>
-          <li><strong>Logros</strong>: hitos automáticos (primer 1.000 €, un año sin fallar, cartera duplicada…) con toast de desbloqueo y panel de historial en la vista Total. Se incluyen en el backup JSON.</li>
+          <li><strong>Logros</strong>: 29 hitos automáticos (patrimonio, constancia, rentabilidad, diversificación, rentas y gestión) con toast de desbloqueo. Ventana propia accesible desde el menú (bajo "Vs. Benchmark") con barra de progreso y agrupados por categoría. Se incluyen en el backup JSON.</li>
           <li><strong>Informe anual "wrapped"</strong>: tarjeta-resumen del año (aportado, ganancia, mejor mes, alpha vs índice) exportable como imagen PNG, desde el menú DATOS.</li>
           <li><strong>Arranque sin Chart.js</strong>: si el CDN falla, la app funciona sin gráficos en lugar de no abrir.</li>
           <li><strong>Fixes de cifrado</strong>: cambiar la passphrase re-cifra correctamente los snapshots; activar/desactivar el cifrado ya no deja campos sueltos que vaciaban la cartera al recargar; carga tolerante a campos corruptos con modo solo-lectura de protección.</li>
@@ -577,6 +583,20 @@
       <div class="colors" id="mpColors"></div>
     </div>
     <button class="save-btn" id="mpSave" disabled>CREAR PRODUCTO</button>
+  </div>
+</div>
+
+<!-- Modal logros -->
+<div class="modal-bg" id="modalLogros">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <div>
+        <h2>LOGROS <span class="logros-count-badge" id="logrosCount"></span></h2>
+        <div class="modal-sub">Hitos que se desbloquean solos según tu progreso</div>
+      </div>
+      <button class="modal-close" data-close="modalLogros">✕</button>
+    </div>
+    <div id="logrosBody"></div>
   </div>
 </div>
 

@@ -1056,7 +1056,7 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Features avanzadas: tema claro, sparklines, streak, filtro, Monte Carlo, PDF
+   Features avanzadas: tema claro, streak, filtro, Monte Carlo, PDF
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Botón tema ─────────────────────────────────────────────────────────── */
@@ -1069,9 +1069,6 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   transition: all 0.15s;
 }
 .btn-theme:hover { color: var(--text); border-color: var(--mute); }
-
-/* ── Sparkline en tabs ──────────────────────────────────────────────────── */
-.tab .spark { display: block; flex-shrink: 0; }
 
 /* ── Streak badge ───────────────────────────────────────────────────────── */
 .streak-badge {
@@ -1974,6 +1971,31 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 .costes-foot { margin-top: 10px; font-family: monospace; font-size: 10px; color: var(--dimmer); }
 
 /* ── Logros ─────────────────────────────────────────────────────────────── */
+.logros-count-badge {
+  font-family: monospace; font-size: 12px; letter-spacing: 1px;
+  color: var(--gold); margin-left: 8px;
+}
+.logros-progress { margin-bottom: 20px; }
+.logros-progress-track {
+  height: 8px; border-radius: 50px; overflow: hidden;
+  background: var(--panel-b);
+}
+.logros-progress-fill {
+  height: 100%; border-radius: 50px;
+  background: linear-gradient(90deg, var(--gold), #FDE68A);
+  transition: width .4s ease;
+}
+.logros-progress-label {
+  margin-top: 6px; font-family: monospace; font-size: 10px; color: var(--mute);
+}
+.logros-group { margin-bottom: 22px; }
+.logros-group-title {
+  font-family: monospace; font-size: 10px; letter-spacing: 2px;
+  color: var(--dim); border-bottom: 1px solid var(--panel-b);
+  padding-bottom: 6px; margin-bottom: 4px;
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.logros-group-count { color: var(--gold); font-size: 10px; }
 .logros-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px; margin-top: 10px;

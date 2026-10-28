@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <!-- Content-Security-Policy: defensa en profundidad contra XSS. script-src no
-     permite 'unsafe-inline' → un script o handler inyectado no se ejecutaría.
-     connect-src enumera exactamente las APIs de precios y proxies usados. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://api.coingecko.com https://api.twelvedata.com https://query1.finance.yahoo.com https://api.allorigins.win https://api.codetabs.com https://corsproxy.io https://thingproxy.freeboard.io https://cors-proxy.htmldriven.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'">
+     permite 'unsafe-inline' → un script o handler inyectado no se ejecutaría, y
+     solo admite las tres librerías concretas de jsDelivr (no todo el CDN, que
+     permitiría cargar cualquier paquete npm). connect-src enumera exactamente las
+     APIs de precios y los proxies CORS en uso (Yahoo se consulta solo vía proxy). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4.4.1/ https://cdn.jsdelivr.net/npm/jspdf@2.5.2/ https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://api.coingecko.com https://api.twelvedata.com https://api.allorigins.win https://api.codetabs.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'">
 <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#080C12">
 <meta name="description" content="Seguimiento personal de cartera de inversiones">
@@ -18,12 +20,12 @@
 <title>Mi Cartera</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
-<link rel="apple-touch-icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Lato:wght@300;400;700&display=swap" rel="stylesheet" crossorigin="anonymous">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -227,6 +229,26 @@
   </div>
 </aside>
 
+<!-- Modal passphrase (sustituye a prompt(): el campo es de tipo password) -->
+<div class="modal-bg" id="modalPass" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2 id="ppTitle">PASSPHRASE</h2>
+    </div>
+    <div class="modal-sub" id="ppMsg" style="margin-bottom:14px;white-space:pre-line"></div>
+    <form id="ppForm" autocomplete="off">
+      <div class="field">
+        <label for="ppInput">PASSPHRASE</label>
+        <input type="password" id="ppInput" autocomplete="current-password">
+      </div>
+      <div class="pp-actions">
+        <button type="button" class="btn-ghost" id="ppCancel">CANCELAR</button>
+        <button type="submit" class="save-btn" id="ppOk">ACEPTAR</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Modal entrada -->
 <div class="modal-bg" id="modalEntrada">
   <div class="modal">
@@ -238,34 +260,36 @@
       <button class="modal-close" data-close="modalEntrada">✕</button>
     </div>
     <div class="field">
-      <label>MES</label>
-      <input type="month" id="meFecha">
+      <label for="meFecha">MES</label>
+      <!-- placeholder/pattern: Safari macOS y Firefox escritorio muestran type=month como texto -->
+      <input type="month" id="meFecha" placeholder="AAAA-MM" pattern="\d{4}-(0[1-9]|1[0-2])">
     </div>
     <div class="field">
       <label style="margin-bottom:8px">APORTACIÓN DESGLOSADA (€)</label>
       <div class="triple">
         <div>
-          <input type="number" step="0.01" placeholder="Manual"   id="meManual">
+          <input type="text" inputmode="decimal" placeholder="Manual"   id="meManual">
           <div class="sublabel">MANUAL</div>
         </div>
         <div>
-          <input type="number" step="0.01" placeholder="Saveback" id="meSaveback">
+          <input type="text" inputmode="decimal" placeholder="Saveback" id="meSaveback">
           <div class="sublabel">SAVEBACK</div>
         </div>
         <div>
-          <input type="number" step="0.01" placeholder="Round-up" id="meRoundup">
+          <input type="text" inputmode="decimal" placeholder="Round-up" id="meRoundup">
           <div class="sublabel">ROUND-UP</div>
         </div>
       </div>
       <div class="total-line" id="meTotal">Total: €0,00</div>
     </div>
     <div class="field">
-      <label>VALOR REAL ACTUAL (€)</label>
-      <input type="number" step="0.01" placeholder="4450" id="meValor">
+      <label for="meValor">VALOR REAL ACTUAL (€)</label>
+      <!-- type=text + inputmode: admite coma decimal ("4450,50") en todos los navegadores -->
+      <input type="text" inputmode="decimal" placeholder="4450" id="meValor">
     </div>
     <div class="field">
       <label>RENTA COBRADA <span class="lbl-hint">(dividendo o cupón, este mes, opcional)</span></label>
-      <input type="number" step="0.01" placeholder="0" id="meDividendo">
+      <input type="text" inputmode="decimal" placeholder="0" id="meDividendo">
     </div>
     <div class="field" style="margin-bottom:24px">
       <label>NOTA DEL MES (opcional)</label>
@@ -319,6 +343,23 @@
 
     <!-- Entradas del changelog -->
     <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.10</span>
+          <span class="cl-ver-date">Octubre 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Cifrado más seguro</strong>: activar, desactivar o cambiar la passphrase escribe todo (estado, snapshots y metadatos) en una única transacción; un fallo o un cierre a mitad ya no mezcla claves. Con la app bloqueada ya no se puede tocar el cifrado (antes podía sobrescribir los datos con una cartera vacía). La passphrase se pide en un campo oculto, no en un <code>prompt()</code>.</li>
+          <li><strong>Guardado atómico</strong>: todos los campos se guardan en una sola transacción de IndexedDB, confirmada antes de dar el guardado por bueno.</li>
+          <li><strong>Fiscalidad</strong>: el tramo del ahorro por encima de 300.000 € tributa al 30% (Ley 7/2024). El panel de tax-loss harvesting vuelve a mostrarse e incluye la regla de los 2 meses.</li>
+          <li><strong>Cálculos</strong>: la proyección y el FIRE usan la tasa mensual equivalente a la TIR anual (antes la sobreestimaban). "Rent. año" es time-weighted. Un producto que se empieza a registrar con una posición previa ya no crea un pico falso de rentabilidad en el Total.</li>
+          <li><strong>Import CSV</strong>: admite el separador <code>;</code> y la coma decimal de Excel en español, fechas tipo <code>ene-24</code> o <code>03/2024</code>; descarta filas con importes no numéricos y meses duplicados avisando.</li>
+          <li><strong>Usabilidad</strong>: los sliders de Proyección y FIRE se pueden arrastrar con normalidad; los campos de Fiscalidad y Asignación no pierden el foco al escribir; los importes admiten coma decimal; el botón "Nuevo producto" del menú ya no abre el modal en modo edición.</li>
+          <li><strong>Correcciones posteriores</strong>: el benchmark ya no desplaza un mes los cierres en horario de invierno; "12.500" se lee como doce mil quinientos (punto de miles) en importes y en CSV con <code>;</code>; pasar de campo con Tab o pulsar un preset justo después de escribir en Fiscalidad/Asignación ya no pierde el foco ni el clic; con los datos bloqueados ya no se pueden borrar entradas, productos ni snapshots ni reordenar pestañas; Comparar avisa de los snapshots que no se pueden descifrar; en CSV dos IDs que coinciden tras sanearlos ya no se fusionan.</li>
+          <li><strong>Compatibilidad</strong>: iconos PNG para iOS/Android, cabecera respetando el notch en iOS, desenfoques con prefijo <code>-webkit-</code>, sin zoom al enfocar campos en iOS, timeouts en las peticiones de precios y proxies caídos retirados.</li>
+        </ul>
+      </div>
 
       <div class="cl-version">
         <div class="cl-ver-head">

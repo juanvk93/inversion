@@ -60,7 +60,8 @@ const TWELVEDATA_TTL  = 10 * 60 * 1000;   // 10 min
 // Yahoo Finance · API pública del chart endpoint. Yahoo no expone CORS,
 // pasamos el request por un proxy público. Sin clave, formato de ticker tipo
 // IWDA.AS, EUNL.DE, VWCE.DE.
-// Nota: corsproxy.io ya no permite uso gratis fuera de localhost (devuelve 403).
+// Nota: corsproxy.io (403 fuera de localhost), thingproxy.freeboard.io y
+// cors-proxy.htmldriven.com están fuera de servicio y se retiraron de la lista.
 // Usamos allorigins.win como primario con codetabs como fallback.
 const YAHOO_API = "https://query1.finance.yahoo.com/v8/finance/chart/";
 // Lista de proxies CORS públicos. Se prueban en orden hasta que uno responda
@@ -68,10 +69,8 @@ const YAHOO_API = "https://query1.finance.yahoo.com/v8/finance/chart/";
 const YAHOO_PROXIES = [
   (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
   (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-  (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-  (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
-  (u) => `https://cors-proxy.htmldriven.com/?url=${encodeURIComponent(u)}`,
 ];
+const FETCH_TIMEOUT = 8000;   // ms máximo por petición de precio/serie
 const YAHOO_TTL = 10 * 60 * 1000;   // 10 min
 
 // Proveedores de precio ETF soportados
@@ -88,13 +87,14 @@ const BENCHMARKS = [
 ];
 const BENCHMARK_TTL = 6 * 60 * 60 * 1000;   // 6 h (los cierres mensuales no cambian rápido)
 
-// Tramos IRPF 2026 (renta del ahorro, modelo D-100)
+// Tramos IRPF de la base del ahorro (España, modelo D-100). Desde 2025 (Ley 7/2024)
+// la parte que excede de 300.000 € tributa al 30%. Tabla única para toda la app.
 const FISCAL_TRAMOS_2026 = [
   { hasta:    6000, tipo: 0.19 },
   { hasta:   50000, tipo: 0.21 },
   { hasta:  200000, tipo: 0.23 },
   { hasta:  300000, tipo: 0.27 },
-  { hasta: Infinity, tipo: 0.28 },
+  { hasta: Infinity, tipo: 0.30 },
 ];
 
 // La app arranca vacía: sin productos ni entradas de ejemplo.
@@ -107,8 +107,12 @@ const ENTRADAS_INIT  = {};
 
 const fmt        = (n, d = 2) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const fmtE       = (n)        => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
-const labelMes   = (ym)       => { const [y, m] = ym.split("-"); return `${MESES[+m-1]} ${y.slice(2)}`; };
+const labelMes   = (ym)       => { const [y, m] = String(ym).split("-"); return `${MESES[+m-1] ?? m} ${(y || "").slice(2)}`; };
 const hoy        = ()         => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; };
+// Fecha local YYYY-MM-DD (toISOString usa UTC y entre 00:00 y 02:00 en España da el día anterior)
+const hoyDia     = ()         => { const d = new Date(); return `${hoy()}-${String(d.getDate()).padStart(2,"0")}`; };
+// Formato de mes válido: YYYY-MM con mes 01-12
+const RE_FECHA   = /^\d{4}-(0[1-9]|1[0-2])$/;
 const aportTotal = (e)        => (e.manual || 0) + (e.saveback || 0) + (e.roundup || 0);
 const esc        = (s)        => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 // IDs reservados para las vistas internas: un producto importado no puede usarlos
@@ -117,7 +121,9 @@ const RESERVED_IDS = new Set(["total", "resumen", "proyeccion", "fire", "asignac
 const sanitizeId = (s) => {
   let out = String(s ?? "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
   if (!out) out = `id_${Date.now()}`;
-  if (RESERVED_IDS.has(out)) out = `prod_${out}`;
+  // Las claves de Object.prototype (__proto__, constructor, toString…) romperían
+  // los mapas {} indexados por id (prototype pollution / colisiones).
+  if (RESERVED_IDS.has(out) || out in Object.prototype) out = `prod_${out}`;
   return out;
 };
 const $          = (sel)      => document.querySelector(sel);
@@ -128,6 +134,79 @@ function debounce(fn, ms = 60) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
+// Re-render tras confirmar un input (change) sin romper la interacción siguiente:
+// - Si el change lo dispara un clic (blur por pointerdown), espera a que el clic
+//   termine; si no, el botón pulsado desaparecía del DOM y el clic se perdía.
+// - Tras el render devuelve el foco al campo al que se movió el usuario (Tab).
+let _pointerActivo = false;
+document.addEventListener("pointerdown", () => { _pointerActivo = true; }, true);
+["pointerup", "pointercancel"].forEach(ev =>
+  document.addEventListener(ev, () => { _pointerActivo = false; }, true));
+
+function rerenderTrasEdicion(renderFn) {
+  const run = () => {
+    const a = document.activeElement;
+    let sel = null;
+    if (a && a !== document.body && $("#main")?.contains(a)) {
+      if (a.id) sel = `#${CSS.escape(a.id)}`;
+      else if (a.dataset.fiscalVender != null) sel = `[data-fiscal-vender="${CSS.escape(a.dataset.fiscalVender)}"]`;
+    }
+    renderFn();
+    if (sel) $(sel)?.focus();
+  };
+  if (!_pointerActivo) { setTimeout(run, 0); return; }
+  let hecho = false;
+  const fin = () => {
+    if (hecho) return;
+    hecho = true;
+    document.removeEventListener("pointerup", fin, true);
+    document.removeEventListener("pointercancel", fin, true);
+    setTimeout(run, 0);   // después del click que sigue a pointerup
+  };
+  document.addEventListener("pointerup", fin, true);
+  document.addEventListener("pointercancel", fin, true);
+}
+
+// fetch con timeout (AbortController: AbortSignal.timeout no existe en Safari < 16).
+// El límite cubre también la lectura del cuerpo: la Response devuelta trae el
+// cuerpo ya descargado, así que r.json()/r.text() no pueden quedarse colgados.
+function fetchWithTimeout(url, opts = {}, ms = FETCH_TIMEOUT) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .then(async (r) => {
+      const body = [204, 205, 304].includes(r.status) ? null : await r.arrayBuffer();
+      return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers });
+    })
+    .catch((err) => {
+      throw err?.name === "AbortError" ? new Error("Tiempo de espera agotado") : err;
+    })
+    .finally(() => clearTimeout(t));
+}
+
+// Convierte un número escrito por el usuario o importado ("1.234,56", "1234.56",
+// "1234,5") a Number. Devuelve NaN si no es numérico (nunca 0 en silencio).
+// miles=true (importes en formato español): un único punto seguido de exactamente
+// 3 cifras es separador de miles ("12.500" → 12500, no 12,5).
+function parseNum(v, miles = false) {
+  if (typeof v === "number") return v;
+  let s = String(v ?? "").trim().replace(/\s|€/g, "");
+  if (!s) return NaN;
+  const lastDot = s.lastIndexOf("."), lastComma = s.lastIndexOf(",");
+  if (lastDot >= 0 && lastComma >= 0) {
+    // Ambos separadores: el último es el decimal ("1.234,56" / "1,234.56")
+    s = lastComma > lastDot ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    // Solo comas: una → decimal ("1234,56"); varias → miles ("1,234,567")
+    s = (s.match(/,/g).length === 1) ? s.replace(",", ".") : s.replace(/,/g, "");
+  } else if ((s.match(/\./g) || []).length > 1) {
+    s = s.replace(/\./g, "");   // "1.234.567" → miles
+  } else if (miles && /^-?[1-9]\d{0,2}\.\d{3}$/.test(s)) {
+    s = s.replace(".", "");     // "12.500" → miles ("0.125" sigue siendo decimal)
+  }
+  return /^-?(\d+\.?\d*|\.\d+)$/.test(s) ? parseFloat(s) : NaN;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 2a. CRYPTO · cifrado local AES-GCM con clave derivada por PBKDF2
 // ═══════════════════════════════════════════════════════════════════════════
@@ -136,7 +215,11 @@ const PBKDF2_ITER = 200_000;
 let _cryptoKey = null;   // CryptoKey activa en memoria (null = sin cifrado)
 let _locked    = false;  // true si la BD está cifrada y el usuario canceló el desbloqueo
 
+// crypto.subtle solo existe en contextos seguros (https / localhost), no en file://
+const cryptoDisponible = () => !!(window.isSecureContext && window.crypto?.subtle);
+
 async function deriveKey(passphrase, salt) {
+  if (!cryptoDisponible()) throw new Error("Cifrado no disponible: abre la app por https o localhost");
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey(
     "raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]
@@ -203,8 +286,45 @@ async function dbPut(store, value, key) {
     const tx  = db.transaction(store, "readwrite");
     const os  = tx.objectStore(store);
     const req = key !== undefined ? os.put(value, key) : os.put(value);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror   = () => reject(req.error);
+    // Resolver en oncomplete: hasta entonces la escritura no está confirmada
+    tx.oncomplete = () => resolve(req.result);
+    tx.onerror    = () => reject(tx.error || req.error);
+    tx.onabort    = () => reject(tx.error || new Error("Transacción abortada"));
+  });
+}
+
+// Escribe varios pares [clave, valor] (y borra las claves con valor undefined)
+// en UNA sola transacción: o se aplican todos o ninguno.
+async function dbPutMany(store, pairs) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    const os = tx.objectStore(store);
+    for (const [key, value] of pairs) {
+      if (value === undefined) os.delete(key);
+      else os.put(value, key);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+    tx.onabort    = () => reject(tx.error || new Error("Transacción abortada"));
+  });
+}
+
+// Escribe en KV y en snapshots en UNA transacción (re-cifrado atómico).
+async function dbWriteAtomic(kvPairs, snapRecords) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx   = db.transaction([DB_KV, DB_SNAP], "readwrite");
+    const kv   = tx.objectStore(DB_KV);
+    const snap = tx.objectStore(DB_SNAP);
+    for (const [key, value] of kvPairs) {
+      if (value === undefined) kv.delete(key);
+      else kv.put(value, key);
+    }
+    for (const r of snapRecords) snap.put(r);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+    tx.onabort    = () => reject(tx.error || new Error("Transacción abortada"));
   });
 }
 
@@ -212,9 +332,10 @@ async function dbDelete(store, key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, "readwrite");
-    const req = tx.objectStore(store).delete(key);
-    req.onsuccess = () => resolve();
-    req.onerror   = () => reject(req.error);
+    tx.objectStore(store).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+    tx.onabort    = () => reject(tx.error || new Error("Transacción abortada"));
   });
 }
 
@@ -290,6 +411,10 @@ const benchmarkFetching = {};
 
 const charts = {};
 
+// localStorage puede lanzar (Safari con almacenamiento bloqueado / modo privado)
+const lsGet = (k)    => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* sin persistencia */ } };
+
 function migrarEntrada(e) {
   if (e.manual !== undefined || e.saveback !== undefined || e.roundup !== undefined) {
     return {
@@ -336,7 +461,7 @@ async function loadState() {
     if (productosDB !== undefined || entradasDB !== undefined) {
       state.productos = productosDB || PRODUCTOS_INIT;
       const ents = entradasDB || {};
-      state.entradas  = Object.fromEntries(Object.entries(ents).map(([k, list]) => [k, list.map(migrarEntrada)]));
+      state.entradas  = Object.fromEntries(Object.entries(ents).map(([k, list]) => [k, (Array.isArray(list) ? list : []).map(migrarEntrada)]));
       state.objetivos = ((await safeRead("objetivos")) || []).map(o =>
         o.productoId === "total" ? { ...o, productoId: null } : o
       );
@@ -360,14 +485,25 @@ async function loadState() {
         delete p.twelveDataTicker;
       });
     } else {
-      // 2. Primer arranque con IndexedDB: migrar desde localStorage si existe
-      const p = JSON.parse(localStorage.getItem(STORE_K_P) || "null");
-      const e = JSON.parse(localStorage.getItem(STORE_K_E) || "null");
+      // 2. Primer arranque con IndexedDB: migrar desde localStorage si existe.
+      // Try/catch propio: un JSON legado corrupto no debe bloquear la app para
+      // siempre (IndexedDB seguiría vacío y fallaría en cada arranque).
+      let p = null, e = null;
+      try {
+        p = JSON.parse(lsGet(STORE_K_P) || "null");
+        e = JSON.parse(lsGet(STORE_K_E) || "null");
+        if (p != null && !Array.isArray(p)) p = null;
+        if (e != null && typeof e !== "object") e = null;
+      } catch (err) {
+        console.warn("[Cartera] Datos legados de localStorage corruptos; se ignoran", err);
+        alert("Los datos antiguos guardados en este navegador están dañados y no se han podido migrar. La app arranca vacía.");
+        p = e = null;
+      }
       if (p || e) {
         console.info("[Cartera] Migrando datos de localStorage → IndexedDB");
         state.productos = p || PRODUCTOS_INIT;
         const ents = e || ENTRADAS_INIT;
-        state.entradas = Object.fromEntries(Object.entries(ents).map(([k, list]) => [k, list.map(migrarEntrada)]));
+        state.entradas = Object.fromEntries(Object.entries(ents).map(([k, list]) => [k, (Array.isArray(list) ? list : []).map(migrarEntrada)]));
       } else {
         state.productos = PRODUCTOS_INIT;
         state.entradas  = ENTRADAS_INIT;
@@ -375,7 +511,7 @@ async function loadState() {
       saveState();   // fire-and-forget, persiste a IndexedDB
     }
 
-    state.lastSnapshot = (await dbGet(DB_KV, "lastSnapshot")) || localStorage.getItem(STORE_K_SNAP) || null;
+    state.lastSnapshot = (await dbGet(DB_KV, "lastSnapshot")) || lsGet(STORE_K_SNAP) || null;
   } catch (err) {
     // Fallo leyendo la cartera principal: bloqueamos las escrituras para NO
     // sobrescribir con estado vacío los datos que sí siguen en IndexedDB.
@@ -400,33 +536,45 @@ async function readField(key) {
   return raw;
 }
 
-// Escribe un campo en el KV, cifrándolo si _cryptoKey está activa.
-async function writeField(key, value) {
-  if (_cryptoKey) {
-    const blob = await encryptValue(value, _cryptoKey);
-    await dbPut(DB_KV, blob, key);
-  } else {
-    await dbPut(DB_KV, value, key);
-  }
+// Campos persistidos del estado, como pares [clave KV, valor].
+function stateFieldPairs() {
+  return [
+    ["productos",        state.productos],
+    ["entradas",         state.entradas],
+    ["objetivos",        state.objetivos],
+    ["firePrefs",        { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion }],
+    ["twelveDataApiKey", state.twelveDataApiKey || ""],
+    ["etfProvider",      state.etfProvider || "twelvedata"],
+    ["benchmarkSymbol",  state.benchmarkSymbol || "EUNL.DE"],
+    ["logros",           state.logros || {}],
+  ];
 }
 
-// Cola de escritura: serializa los saveState para evitar carreras.
+// Cifra (si hay clave) los pares antes de abrir la transacción: IndexedDB
+// auto-confirma la transacción en cuanto se cede el control a una promesa.
+async function encodePairs(pairs, key) {
+  return Promise.all(pairs.map(async ([k, v]) => [k, key ? await encryptValue(v, key) : v]));
+}
+
+const LOCKED_MSG = "Datos bloqueados: los cambios no se guardarán. Recarga la página e introduce la passphrase.";
+// Guarda para acciones que modifican datos: en modo bloqueado avisa y aborta
+// (antes parecían funcionar y se perdían al recargar).
+function bloqueado() {
+  if (_locked) { alert(LOCKED_MSG); return true; }
+  return false;
+}
+
+// Cola de escritura: serializa los saveState (y las operaciones de cifrado)
+// para evitar carreras. Todos los campos se escriben en UNA transacción.
 let _saveQueue = Promise.resolve();
 function saveState() {
   // En estado bloqueado (cifrado sin desbloquear) no escribimos: evitaría
   // pisar los blobs cifrados con texto plano del estado vacío en memoria.
-  if (_locked) return _saveQueue;
+  if (_locked) { showSaveError(LOCKED_MSG); return _saveQueue; }
   invalidateStatsCache();
   _saveQueue = _saveQueue
     .then(async () => {
-      await writeField("productos", state.productos);
-      await writeField("entradas",  state.entradas);
-      await writeField("objetivos", state.objetivos);
-      await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
-      await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
-      await writeField("etfProvider", state.etfProvider || "twelvedata");
-      await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
-      await writeField("logros", state.logros || {});
+      await dbPutMany(DB_KV, await encodePairs(stateFieldPairs(), _cryptoKey));
       hideSaveError();
     })
     .catch(err => {
@@ -436,13 +584,21 @@ function saveState() {
   return _saveQueue;
 }
 
+// Encola una operación de escritura arbitraria tras los guardados pendientes.
+// Devuelve su promesa (con su error, si lo hay) sin romper la cola.
+function enqueueWrite(fn) {
+  const run = _saveQueue.then(fn);
+  _saveQueue = run.catch(() => {});
+  return run;
+}
+
 // Espera a que se complete cualquier escritura pendiente. Útil antes de hacer
 // snapshots para evitar capturar un estado obsoleto.
 async function awaitSave() { try { await _saveQueue; } catch { /* ya lo logueó saveState */ } }
 
 function flash() {
   const el = $("#saved");
-  if (!el) return;
+  if (!el || _locked) return;   // bloqueado: no se guarda nada, no mostrar "guardado"
   el.style.display = "inline";
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.style.display = "none"; }, 2000);
@@ -452,6 +608,7 @@ function showSaveError(msg) {
   const el = $("#saveError");
   if (!el) return;
   el.title = msg || "";
+  el.textContent = _locked ? "🔒 bloqueado · sin guardar" : "⚠ error al guardar";
   el.style.display = "inline";
 }
 function hideSaveError() {
@@ -479,10 +636,13 @@ function calcStats(entradas) {
     const rentPct  = acum > 0 ? (ganancia / acum) * 100 : 0;
     let rentMes = null;
     if (prevValor !== null && prevValor > 0) {
-      // Modified Dietz: ganancia / (valorInicial + aportación × 0,5)
-      // Asume aportaciones a mediados del período → denominador más preciso
-      const base = prevValor + ap * 0.5;
-      rentMes = ((e.valor - ap - prevValor) / base) * 100;
+      // Modified Dietz: ganancia / (valorInicial + flujo × 0,5)
+      // Asume aportaciones a mediados del período → denominador más preciso.
+      // `flujoExtra` (solo en el Total) = posición previa de un producto que
+      // empieza a registrarse ese mes: entra dinero que no es rentabilidad.
+      const flujo = ap + (e.flujoExtra || 0);
+      const base  = prevValor + flujo * 0.5;
+      if (base > 0) rentMes = ((e.valor - flujo - prevValor) / base) * 100;
     }
     prevValor = e.valor;
     return { ...e, aportacion: ap, acumAportado: acum, acumManual, acumSaveback, acumRoundup, acumDividendos, ganancia, rentPct, rentMes, label: labelMes(e.fecha) };
@@ -512,7 +672,7 @@ function statsTotalCalc() {
   //    y valor de cartera usando CARRY-FORWARD del último valor conocido por producto.
   const lastValor = {};
   const filas = fechasOrd.map(fecha => {
-    let manual = 0, saveback = 0, roundup = 0, dividendo = 0, valor = 0;
+    let manual = 0, saveback = 0, roundup = 0, dividendo = 0, valor = 0, flujoExtra = 0;
     state.productos.forEach(p => {
       const e = idxPorProd[p.id][fecha];
       if (e) {
@@ -520,11 +680,14 @@ function statsTotalCalc() {
         saveback  += e.saveback  || 0;
         roundup   += e.roundup   || 0;
         dividendo += e.dividendo || 0;
+        // Primera entrada de un producto: lo que vale por encima de su aportación
+        // es una posición previa que se incorpora, no una revalorización del mes.
+        if (!(p.id in lastValor)) flujoExtra += (e.valor || 0) - aportTotal(e);
         lastValor[p.id] = e.valor || 0;
       }
       valor += lastValor[p.id] || 0;
     });
-    return { id: fecha, fecha, manual, saveback, roundup, dividendo, valor };
+    return { id: fecha, fecha, manual, saveback, roundup, dividendo, valor, flujoExtra };
   });
 
   _statsTotalCache = calcStats(filas);
@@ -584,8 +747,12 @@ function calcTIR(entradasOrd) {
   return xirr(flows);
 }
 
+// Tasa mensual equivalente a una tasa anual EFECTIVA (como la que da XIRR).
+// tasa/12 capitalizaría de más: 10% anual → 10,47% efectivo.
+const tasaMensualEq = (tasaAnual) => tasaAnual > -1 ? Math.pow(1 + tasaAnual, 1 / 12) - 1 : -1;
+
 function calcProyeccion(valorInicial, aportacionMensual, anos, tasaAnual) {
-  const tasaMensual = tasaAnual / 12;
+  const tasaMensual = tasaMensualEq(tasaAnual);
   const meses       = anos * 12;
   const puntos      = [];
   let valor    = valorInicial;
@@ -622,8 +789,12 @@ function agruparPorAno(filas) {
   return Object.values(map).map(g => {
     const ganancia = g.valorFin - g.ultimoAcum;
     const rentPct  = g.ultimoAcum > 0 ? (ganancia / g.ultimoAcum) * 100 : 0;
-    const vIni     = g.fechas[0].valor - g.fechas[0].aportacion;
-    const rentAno  = vIni > 0 ? ((g.valorFin - g.aportadoAno - vIni) / vIni) * 100 : null;
+    // Rentabilidad del año time-weighted: encadena las rentabilidades mensuales
+    // (Modified Dietz), que ya descuentan las aportaciones de cada mes.
+    const conRent  = g.fechas.filter(f => f.rentMes != null);
+    const rentAno  = conRent.length
+      ? (conRent.reduce((acc, f) => acc * (1 + f.rentMes / 100), 1) - 1) * 100
+      : null;
     return { ...g, ganancia, rentPct, rentAno, meses: g.fechas.length };
   });
 }
@@ -816,24 +987,38 @@ function calcAportacionesPorAno() {
     .map(([year, d]) => ({ year, ...d, total: d.manual + d.saveback + d.roundup }));
 }
 
+// PRNG determinista (mulberry32): con la misma semilla el Monte Carlo da las
+// mismas cifras en cada render, en lugar de P5/P50/P95 que "bailan".
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // Box-Muller: muestra de N(0,1)
-function randomNormal() {
+function randomNormal(rnd = Math.random) {
   let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
+  while (u === 0) u = rnd();
+  while (v === 0) v = rnd();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
 // Simula `nSims` trayectorias con retornos normales N(mediaMensual, stdMensual).
 // Devuelve array de trayectorias (cada una tiene meses+1 valores).
-function simulateMonteCarlo({ valorInicial, aportMensual, meses, mediaMensual, stdMensual, nSims }) {
+function simulateMonteCarlo({ valorInicial, aportMensual, meses, mediaMensual, stdMensual, nSims, seed = 20240601 }) {
+  const rnd = mulberry32(seed);
   const trayectorias = new Array(nSims);
   for (let s = 0; s < nSims; s++) {
     const path = new Float64Array(meses + 1);
     path[0] = valorInicial;
     let v = valorInicial;
     for (let m = 1; m <= meses; m++) {
-      const ret = mediaMensual + stdMensual * randomNormal();
+      const ret = mediaMensual + stdMensual * randomNormal(rnd);
       v = v * (1 + ret) + aportMensual;
       if (v < 0) v = 0;   // cartera no puede ir bajo cero
       path[m] = v;
@@ -979,7 +1164,7 @@ function checkLogros() {
   if (!state.logros) state.logros = {};
   const nuevos = LOGROS_DEF.filter(l => !state.logros[l.id] && l.c(ctx));
   if (!nuevos.length) return;
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = hoyDia();
   nuevos.forEach(l => { state.logros[l.id] = fecha; });
   saveState();
   nuevos.forEach((l, i) => setTimeout(() => showLogroToast(l), i * 4600));
@@ -1047,27 +1232,10 @@ function renderLogrosModal() {
   body.innerHTML = barra + secciones;
 }
 
-// Tramos IRPF de la base del ahorro (España, vigentes 2025-2026).
+// Impuesto por tramos de la base del ahorro (tabla única FISCAL_TRAMOS_2026).
 // Aplica a plusvalías y rendimientos del capital mobiliario.
-const TRAMOS_AHORRO_ES = [
-  { hasta: 6000,     tipo: 0.19 },
-  { hasta: 50000,    tipo: 0.21 },
-  { hasta: 200000,   tipo: 0.23 },
-  { hasta: 300000,   tipo: 0.27 },
-  { hasta: Infinity, tipo: 0.28 },
-];
-
 function calcImpuestoPlusvalia(ganancia) {
-  if (ganancia == null || ganancia <= 0) return 0;
-  let restante = ganancia, impuesto = 0, anterior = 0;
-  for (const t of TRAMOS_AHORRO_ES) {
-    if (restante <= 0) break;
-    const aplicar = Math.min(restante, t.hasta - anterior);
-    impuesto  += aplicar * t.tipo;
-    restante  -= aplicar;
-    anterior   = t.hasta;
-  }
-  return impuesto;
+  return calcImpuestoTramos(ganancia);
 }
 
 // Tipo medio efectivo (impuesto / ganancia bruta). Útil para mostrar contexto.
@@ -1141,7 +1309,7 @@ const CSV_HEADERS = [
   // Metadatos de producto (se repiten en cada fila del producto; en import basta la 1ª)
   "producto_referencia","producto_tipologia","producto_divisa","producto_color",
   "producto_unidades","producto_precio_manual","producto_coingecko","producto_etf_ticker",
-  "producto_asignacion","producto_ter","producto_comision",
+  "producto_asignacion","producto_ter","producto_comision","producto_comentarios",
 ];
 
 function escCSV(v) {
@@ -1149,7 +1317,9 @@ function escCSV(v) {
   let s = String(v);
   // CSV injection: si empieza por =, +, -, @, tab o CR, prefijar con ' para que Excel/LibreOffice
   // no la interpreten como fórmula.
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  // También si ya empieza por ' + uno de esos caracteres: unescCSV quita un solo '
+  // al importar, así el texto original vuelve intacto.
+  if (/^'*[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -1157,8 +1327,8 @@ function escCSV(v) {
 // entrecomillados. Devuelve un array de registros; cada registro un array de
 // campos. Imprescindible para round-trip de notas multilínea (la versión por
 // línea las rompía al hacer split("\n") antes de parsear). El texto debe venir
-// ya normalizado a LF.
-function parseCSVRecords(texto) {
+// ya normalizado a LF. `sep`: separador de campos ("," o ";" de Excel en español).
+function parseCSVRecords(texto, sep = ",") {
   const records = [];
   let row = [], field = "", inQ = false;
   const endField = () => { row.push(field); field = ""; };
@@ -1172,7 +1342,7 @@ function parseCSVRecords(texto) {
       } else field += c;
     } else if (c === '"') {
       inQ = true;
-    } else if (c === ",") {
+    } else if (c === sep) {
       endField();
     } else if (c === "\n") {
       endRow();
@@ -1191,7 +1361,7 @@ function generarCSV() {
       escCSV(p.referencia || ""), escCSV(p.tipologia || ""), escCSV(p.divisa || ""),
       escCSV(p.color || ""), p.unidades || 0, p.precioManual || 0,
       escCSV(p.coingeckoId || ""), escCSV(p.etfTicker || ""), p.asignacionObjetivo || 0,
-      p.ter || 0, p.comisionCompra || 0,
+      p.ter || 0, p.comisionCompra || 0, escCSV(p.comentarios || ""),
     ];
     const lista = state.entradas[p.id] || [];
     if (lista.length) {
@@ -1223,14 +1393,53 @@ function descargarCSV(nombre, contenido) {
 }
 
 function exportarCSV() {
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = hoyDia();
   descargarCSV(`mi-cartera-${fecha}.csv`, generarCSV());
   flash();
   closeDrawer();
 }
 
+// Detecta el separador mirando la cabecera (Excel en español guarda con ";").
+function detectarSeparadorCSV(texto) {
+  const cab = texto.split("\n", 1)[0] || "";
+  const n = (ch) => cab.split(ch).length - 1;
+  return n(";") > n(",") ? ";" : ",";
+}
+
+// Quita el prefijo ' que escCSV añade contra la inyección de fórmulas.
+const unescCSV = (v) => /^''*[=+\-@\t\r]/.test(v) ? v.slice(1) : v;
+
+// Normaliza la fecha de una fila a YYYY-MM. Acepta YYYY-MM, YYYY-MM-DD,
+// YYYY/MM, MM/YYYY, MM-YYYY y "ene-24"/"ene 2024" (Excel en español). "" si no es válida.
+const MESES_ABBR = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+function normalizarFechaCSV(v) {
+  const t = String(v || "").trim().toLowerCase().replace(/\.$/, "");
+  let y, m, r;
+  if ((r = t.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?$/)))      { y = +r[1]; m = +r[2]; }
+  else if ((r = t.match(/^(?:\d{1,2}[-/])?(\d{1,2})[-/](\d{4})$/))) { y = +r[2]; m = +r[1]; }
+  else if ((r = t.match(/^([a-zñ]{3})[a-zñ]*\.?[-/ ](\d{2}|\d{4})$/))) {
+    m = MESES_ABBR.indexOf(r[1]) + 1;
+    y = r[2].length === 2 ? 2000 + +r[2] : +r[2];
+  }
+  else return "";
+  if (!(m >= 1 && m <= 12)) return "";
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+
+// Deja una entrada por mes (la última del fichero gana). Devuelve cuántas quitó.
+function dedupFechas(lista) {
+  const porFecha = new Map();
+  lista.forEach(e => porFecha.set(e.fecha, e));
+  const quitadas = lista.length - porFecha.size;
+  return { lista: [...porFecha.values()].sort((a, b) => a.fecha.localeCompare(b.fecha)), quitadas };
+}
+
 function importarCSV(texto) {
-  const records = parseCSVRecords(texto.replace(/\r\n?/g, "\n"));
+  texto = texto.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const sep = detectarSeparadorCSV(texto);
+  const records = parseCSVRecords(texto, sep).map(r => r.map(unescCSV));
+  // Excel en español (separador ";") usa coma decimal: ahí "12.500" son miles
+  const miles = sep === ";";
   if (!records.length) return null;
   const cab = records[0].map(h => h.trim().toLowerCase());
   const idx = (n) => cab.indexOf(n);
@@ -1244,16 +1453,31 @@ function importarCSV(texto) {
         iUni  = idx("producto_unidades"),    iPrM = idx("producto_precio_manual"),
         iCg   = idx("producto_coingecko"),   iEtf = idx("producto_etf_ticker"),
         iAsg  = idx("producto_asignacion"),  iTer = idx("producto_ter"),
-        iCom  = idx("producto_comision");
-  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
+        iCom  = idx("producto_comision"),    iCmt = idx("producto_comentarios");
+  const num = (v) => { const n = parseNum(v, miles); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  // Importe de una entrada: vacío → 0; texto no numérico → NaN (la fila se descarta)
+  const imp = (v) => (v == null || String(v).trim() === "") ? 0 : parseNum(v, miles);
+  // ID original → ID saneado único ("a b" y "a_b" no deben fusionarse)
+  const idMap = new Map(), usadosId = new Set();
+  const idUnico = (raw) => {
+    if (!idMap.has(raw)) {
+      const base = sanitizeId(raw);
+      let id = base, k = 2;
+      while (usadosId.has(id)) id = `${base}_${k++}`;
+      usadosId.add(id);
+      idMap.set(raw, id);
+    }
+    return idMap.get(raw);
+  };
 
   const prodMap = {};
   const ents = {};
+  let descartadas = 0;
   for (let i = 1; i < records.length; i++) {
     const c = records[i];
     if (!c[iPid] && !c[iPnom]) continue;
     const rawPid = (c[iPid] || `prod_${c[iPnom] || ""}`).trim();
-    const pid    = sanitizeId(rawPid);   // bloquea caracteres peligrosos en IDs
+    const pid    = idUnico(rawPid);      // sanea (bloquea caracteres peligrosos) y desambigua
     const pnom   = (c[iPnom] || pid).trim();
     if (!prodMap[pid]) {
       // Reconstruir producto con metadatos (primera fila que lo menciona)
@@ -1271,35 +1495,43 @@ function importarCSV(texto) {
         asignacionObjetivo: iAsg >= 0 ? Math.max(0, Math.min(100, num(c[iAsg]))) : 0,
         ter:                iTer >= 0 ? Math.max(0, Math.min(10, num(c[iTer]))) : 0,
         comisionCompra:     iCom >= 0 ? num(c[iCom]) : 0,
+        comentarios:        iCmt >= 0 ? (c[iCmt] || "").trim() : "",
       };
       ents[pid] = [];
     }
-    // Filas sin fecha válida solo aportan metadatos del producto (no entrada)
+    // Filas sin fecha solo aportan metadatos del producto (no entrada)
     if (!(c[iF] || "").trim()) continue;
+    const fecha = normalizarFechaCSV(c[iF]);
     let manual = 0, saveback = 0, roundup = 0;
-    if (iM >= 0) manual   = parseFloat(c[iM]) || 0;
-    if (iS >= 0) saveback = parseFloat(c[iS]) || 0;
-    if (iR >= 0) roundup  = parseFloat(c[iR]) || 0;
-    if (iM < 0 && iA >= 0) manual = parseFloat(c[iA]) || 0;
+    if (iM >= 0) manual   = imp(c[iM]);
+    if (iS >= 0) saveback = imp(c[iS]);
+    if (iR >= 0) roundup  = imp(c[iR]);
+    if (iM < 0 && iA >= 0) manual = imp(c[iA]);
+    const valor     = iV >= 0 ? parseNum(c[iV], miles) : NaN;
+    const dividendo = iDvd >= 0 ? imp(c[iDvd]) : 0;
+    // Fecha o importes no válidos → se descarta la fila (antes se ponían a 0 en silencio)
+    if (!fecha || ![manual, saveback, roundup, valor, dividendo].every(Number.isFinite) || valor < 0) {
+      descartadas++;
+      continue;
+    }
     ents[pid].push({
       id:    Date.now() + Math.random(),
-      fecha: (c[iF] || "").trim(),
-      manual, saveback, roundup,
-      valor:     parseFloat(c[iV]) || 0,
-      dividendo: iDvd >= 0 ? (parseFloat(c[iDvd]) || 0) : 0,
+      fecha,
+      manual, saveback, roundup, valor, dividendo,
       nota:  (iN >= 0 ? c[iN] : "") || "",
     });
   }
-  let descartadas = 0;
+  let duplicadas = 0;
   Object.keys(ents).forEach(pid => {
-    const antes = ents[pid].length;
-    ents[pid] = ents[pid].filter(e => /^\d{4}-\d{2}$/.test(e.fecha)).sort((a,b) => a.fecha.localeCompare(b.fecha));
-    descartadas += antes - ents[pid].length;
+    const r = dedupFechas(ents[pid]);
+    ents[pid] = r.lista;
+    duplicadas += r.quitadas;
   });
-  return { productos: Object.values(prodMap), entradas: ents, descartadas };
+  return { productos: Object.values(prodMap), entradas: ents, descartadas, duplicadas };
 }
 
 function handleImport(file) {
+  if (bloqueado()) return;
   const reader = new FileReader();
   reader.onload = () => {
     let data;
@@ -1307,9 +1539,11 @@ function handleImport(file) {
     catch (err) { alert("Error al leer CSV: " + err.message); return; }
     if (!data || !data.productos.length) { alert("No se encontraron datos válidos en el CSV"); return; }
     const total = Object.values(data.entradas).flat().length;
-    const avisoDesc = data.descartadas
-      ? `\n⚠ ${data.descartadas} fila(s) descartadas por fecha inválida (formato esperado: AAAA-MM).\n`
+    let avisoDesc = data.descartadas
+      ? `\n⚠ ${data.descartadas} fila(s) descartadas por fecha o importe inválidos (fecha esperada: AAAA-MM).`
       : "";
+    if (data.duplicadas) avisoDesc += `\n⚠ ${data.duplicadas} fila(s) con mes repetido en el mismo producto: se conserva la última.`;
+    if (avisoDesc) avisoDesc += "\n";
     const modo = confirm(
       `Encontrados ${data.productos.length} productos y ${total} entradas.${avisoDesc}\n` +
       `OK: REEMPLAZAR todos los datos actuales\nCancelar: FUSIONAR con los datos actuales`
@@ -1317,6 +1551,9 @@ function handleImport(file) {
     if (modo) {
       state.productos = data.productos;
       state.entradas  = data.entradas;
+      // El CSV no lleva objetivos: se conservan solo los que siguen teniendo producto
+      const ids = new Set(state.productos.map(p => p.id));
+      state.objetivos = (state.objetivos || []).filter(o => o.productoId == null || ids.has(o.productoId));
       state.tab       = state.productos[0]?.id || "total";
     } else {
       const ids = new Set(state.productos.map(p => p.id));
@@ -1392,7 +1629,8 @@ function generarJSON() {
     logros: state.logros || {},
     config: {
       etfProvider:      state.etfProvider || "twelvedata",
-      twelveDataApiKey: state.twelveDataApiKey || "",
+      // Con el cifrado activo la API key no sale en claro en el backup
+      twelveDataApiKey: _cryptoKey ? "" : (state.twelveDataApiKey || ""),
       benchmarkSymbol:  state.benchmarkSymbol || "EUNL.DE",
       theme:            document.documentElement.classList.contains("light") ? "light" : "dark",
     },
@@ -1412,7 +1650,7 @@ function descargarArchivo(nombre, contenido, mime) {
 }
 
 function exportarJSON() {
-  const fecha = new Date().toISOString().slice(0, 10);
+  const fecha = hoyDia();
   descargarArchivo(`mi-cartera-${fecha}.json`, generarJSON(), "application/json;charset=utf-8");
   flash();
   closeDrawer();
@@ -1427,11 +1665,16 @@ function importarJSON(texto) {
   // Productos
   if (!Array.isArray(raw.productos)) throw new Error("Falta 'productos' (debe ser un array)");
   const usadosId = new Set();
+  // id original → id final: si dos ids colisionan tras sanitizar, las entradas y
+  // objetivos deben ir al producto correcto (no al primero con ese id saneado).
+  const idMap = new Map();
   const productos = raw.productos.map((p, i) => {
     if (!p || typeof p !== "object") throw new Error(`productos[${i}]: entrada no válida`);
-    let id = sanitizeId(p.id || p.nombre || `prod_${i}`);
+    const rawId = String(p.id || p.nombre || `prod_${i}`);
+    let id = sanitizeId(rawId);
     while (usadosId.has(id)) id = `${id}_${i}`;
     usadosId.add(id);
+    if (!idMap.has(rawId)) idMap.set(rawId, id);
     const num = (v) => (Number.isFinite(+v) && +v >= 0) ? +v : 0;
     return {
       id,
@@ -1458,18 +1701,20 @@ function importarJSON(texto) {
   if (raw.entradas != null && typeof raw.entradas !== "object")
     throw new Error("'entradas' debe ser un objeto { productoId: [...] }");
   const entradas = {};
-  let descartadas = 0;
+  let descartadas = 0, duplicadas = 0;
   productos.forEach(p => { entradas[p.id] = []; });
+  const resolverId = (raw) => idMap.get(String(raw)) ?? sanitizeId(raw);
   Object.entries(raw.entradas || {}).forEach(([pidRaw, list]) => {
-    const pid = sanitizeId(pidRaw);
+    const pid = resolverId(pidRaw);
     if (!idsValidos.has(pid) || !Array.isArray(list)) return;
     list.forEach(e => {
       if (!e || typeof e !== "object") { descartadas++; return; }
       const fecha = String(e.fecha || "").trim();
-      if (!/^\d{4}-\d{2}$/.test(fecha)) { descartadas++; return; }
+      if (!RE_FECHA.test(fecha)) { descartadas++; return; }
       const num = (v) => Number.isFinite(+v) ? +v : 0;
+      if (!Number.isFinite(+e.valor) || +e.valor < 0) { descartadas++; return; }
       entradas[pid].push({
-        id:        e.id ?? (Date.now() + Math.random()),
+        id:        (typeof e.id === "string" || typeof e.id === "number") ? e.id : (Date.now() + Math.random()),
         fecha,
         manual:    num(e.manual),
         saveback:  num(e.saveback),
@@ -1479,20 +1724,27 @@ function importarJSON(texto) {
         nota:      String(e.nota || ""),
       });
     });
-    entradas[pid].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const r = dedupFechas(entradas[pid]);
+    entradas[pid] = r.lista;
+    duplicadas += r.quitadas;
   });
 
-  // Objetivos (opcional)
+  // Objetivos (opcional). Se descartan los de meta no positiva y los que apuntan
+  // a un producto inexistente (antes se convertían en objetivos de cartera total).
+  let objDescartados = 0;
   const objetivos = Array.isArray(raw.objetivos)
     ? raw.objetivos
-        .filter(o => o && typeof o === "object" && o.nombre && Number.isFinite(+o.meta))
-        .map(o => ({
-          id:         o.id ?? (Date.now() + Math.random()),
+        .filter(o => {
+          const ok = o && typeof o === "object" && o.nombre && Number.isFinite(+o.meta) && +o.meta > 0
+            && (o.productoId == null || o.productoId === "total" || idsValidos.has(resolverId(o.productoId)));
+          if (!ok) objDescartados++;
+          return ok;
+        })
+        .map((o, i) => ({
+          id:         String(o.id ?? `obj_${Date.now()}_${i}`),
           nombre:     String(o.nombre),
           meta:       +o.meta,
-          productoId: o.productoId && idsValidos.has(sanitizeId(o.productoId))
-            ? sanitizeId(o.productoId)
-            : null,
+          productoId: (o.productoId == null || o.productoId === "total") ? null : resolverId(o.productoId),
         }))
     : [];
 
@@ -1528,10 +1780,11 @@ function importarJSON(texto) {
     });
   }
 
-  return { productos, entradas, objetivos, firePrefs, config, logros, descartadas };
+  return { productos, entradas, objetivos, firePrefs, config, logros, descartadas, duplicadas, objDescartados };
 }
 
 function handleImportJSON(file) {
+  if (bloqueado()) return;
   const reader = new FileReader();
   reader.onload = () => {
     let data;
@@ -1541,9 +1794,12 @@ function handleImportJSON(file) {
     const total = Object.values(data.entradas).flat().length;
     const partes = [`${data.productos.length} productos`, `${total} entradas`];
     if (data.objetivos.length) partes.push(`${data.objetivos.length} objetivos`);
-    const avisoDesc = data.descartadas
-      ? `\n⚠ ${data.descartadas} entrada(s) descartadas por fecha inválida.\n`
+    let avisoDesc = data.descartadas
+      ? `\n⚠ ${data.descartadas} entrada(s) descartadas por fecha o valor inválidos.`
       : "";
+    if (data.duplicadas)     avisoDesc += `\n⚠ ${data.duplicadas} entrada(s) con mes repetido: se conserva la última.`;
+    if (data.objDescartados) avisoDesc += `\n⚠ ${data.objDescartados} objetivo(s) descartados (meta no válida o producto inexistente).`;
+    if (avisoDesc) avisoDesc += "\n";
     const modo = confirm(
       `Encontrados: ${partes.join(", ")}.${avisoDesc}\n` +
       `OK: REEMPLAZAR todos los datos actuales\nCancelar: FUSIONAR con los datos actuales`
@@ -1568,7 +1824,7 @@ function handleImportJSON(file) {
         const nuevas   = list.filter(x => !fechasYa.has(x.fecha));
         state.entradas[pid] = [...ya, ...nuevas].sort((a, b) => a.fecha.localeCompare(b.fecha));
       });
-      const objIds = new Set((state.objetivos || []).map(o => o.id));
+      const objIds = new Set((state.objetivos || []).map(o => String(o.id)));
       data.objetivos.forEach(o => { if (!objIds.has(o.id)) state.objetivos.push(o); });
       Object.entries(data.logros || {}).forEach(([k, v]) => {
         if (!state.logros[k]) state.logros[k] = v;
@@ -1577,9 +1833,10 @@ function handleImportJSON(file) {
     // Configuración: se aplica en ambos modos (reemplazar y fusionar)
     if (data.config) {
       if (data.config.etfProvider)      state.etfProvider     = data.config.etfProvider;
-      if (data.config.twelveDataApiKey != null) state.twelveDataApiKey = data.config.twelveDataApiKey;
+      // Una clave vacía en el backup no debe borrar la que ya hay configurada
+      if (data.config.twelveDataApiKey) state.twelveDataApiKey = data.config.twelveDataApiKey;
       if (data.config.benchmarkSymbol)  state.benchmarkSymbol = data.config.benchmarkSymbol;
-      if (data.config.theme)            { localStorage.setItem("tema", data.config.theme); applyTheme(data.config.theme); }
+      if (data.config.theme)            { lsSet("tema", data.config.theme); applyTheme(data.config.theme); }
     }
     saveState();
     render();
@@ -1599,23 +1856,26 @@ async function crearSnapshot() {
   if (_locked) { alert("Datos bloqueados. Recarga e introduce la passphrase."); return; }
   // Esperar a que se hayan persistido todas las escrituras pendientes antes de
   // clonar el estado, evitando capturar una versión obsoleta.
-  await awaitSave();
   const fecha = new Date();
   const iso   = fecha.toISOString();
-  // Si el cifrado está activo, el snapshot guarda el payload cifrado (igual que
-  // el resto del estado en el KV) en lugar de productos/entradas en claro.
-  const snap = _cryptoKey
-    ? { id: fecha.getTime(), fecha: iso, enc: await encryptValue({ productos: state.productos, entradas: state.entradas }, _cryptoKey) }
-    : { id: fecha.getTime(), fecha: iso, productos: clone(state.productos), entradas: clone(state.entradas) };
   try {
-    await dbPut(DB_SNAP, snap);
+    // Dentro de la cola de escritura: espera a los guardados pendientes y no
+    // puede intercalarse con un cambio de clave de cifrado.
+    await enqueueWrite(async () => {
+      // Si el cifrado está activo, el snapshot guarda el payload cifrado (igual que
+      // el resto del estado en el KV) en lugar de productos/entradas en claro.
+      const payload = { productos: clone(state.productos), entradas: clone(state.entradas), objetivos: clone(state.objetivos || []) };
+      const snap = _cryptoKey
+        ? { id: fecha.getTime(), fecha: iso, enc: await encryptValue(payload, _cryptoKey) }
+        : { id: fecha.getTime(), fecha: iso, ...payload };
+      await dbPut(DB_SNAP, snap);
+      await dbPut(DB_KV, iso, "lastSnapshot");
+      // Limitar a SNAP_MAX: descartar los más antiguos. Dentro de la cola para no
+      // cruzarse con un cambio de clave; basta con los ids, sin descifrar.
+      const ids = (await dbAll(DB_SNAP)).map(sn => sn.id).sort((a, b) => b - a);
+      for (let i = SNAP_MAX; i < ids.length; i++) await dbDelete(DB_SNAP, ids[i]);
+    });
     state.lastSnapshot = iso;
-    await dbPut(DB_KV, iso, "lastSnapshot");
-    // Limitar a SNAP_MAX: descartar los más antiguos
-    const todos = await listarSnapshots();
-    for (let i = SNAP_MAX; i < todos.length; i++) {
-      await dbDelete(DB_SNAP, todos[i].id);
-    }
     updateSnapSub();
     await renderSnapshots();
     hideSnapToast();
@@ -1637,49 +1897,77 @@ async function listarSnapshots() {
 }
 
 // Devuelve el snapshot con productos/entradas en claro (descifra si procede).
-// Si está cifrado y no hay clave activa, devuelve listas vacías (no debería
-// ocurrir: la clave está en memoria durante toda la sesión desbloqueada).
+// Si no se puede descifrar (sin clave o cifrado con otra clave) lo marca como
+// `undecryptable` para que la UI no permita restaurarlo (vaciaría la cartera).
 async function decodeSnapshot(snap) {
   if (!snap || !snap.enc) return snap;
-  if (!_cryptoKey) return { ...snap, productos: [], entradas: {} };
+  if (!_cryptoKey) return { ...snap, productos: [], entradas: {}, undecryptable: true };
   try {
     const payload = await decryptValue(snap.enc, _cryptoKey);
-    return { ...snap, productos: payload.productos || [], entradas: payload.entradas || {} };
+    return { ...snap, productos: payload.productos || [], entradas: payload.entradas || {}, objetivos: payload.objetivos };
   } catch {
-    return { ...snap, productos: [], entradas: {} };
+    return { ...snap, productos: [], entradas: {}, undecryptable: true };
   }
 }
 
-// Re-cifra (o descifra) todos los snapshots al cambiar el estado de cifrado.
+// Prepara los snapshots re-cifrados (o descifrados) para un cambio de clave.
 // oldKey: clave con la que están cifrados (null si están en claro).
 // newKey: clave de destino (null para dejarlos en claro).
-async function reencryptSnapshots(oldKey, newKey) {
-  let snaps;
-  try { snaps = await dbAll(DB_SNAP); } catch { return; }
-  for (const s of snaps) {
+// Los que no se pueden descifrar con oldKey se dejan intactos.
+async function buildRekeyedSnapshots(oldKey, newKey) {
+  const out = [];
+  for (const s of await dbAll(DB_SNAP)) {
     let payload;
     if (s.enc) {
       if (!oldKey) continue;
       try { payload = await decryptValue(s.enc, oldKey); } catch { continue; }
     } else {
-      payload = { productos: s.productos || [], entradas: s.entradas || {} };
+      payload = s;
     }
     const base = { productos: payload.productos || [], entradas: payload.entradas || {} };
-    const next = newKey
+    if (payload.objetivos) base.objetivos = payload.objetivos;
+    out.push(newKey
       ? { id: s.id, fecha: s.fecha, enc: await encryptValue(base, newKey) }
-      : { id: s.id, fecha: s.fecha, ...base };
-    await dbPut(DB_SNAP, next);
+      : { id: s.id, fecha: s.fecha, ...base });
   }
+  return out;
+}
+
+// Cambia la clave de TODO lo persistido (estado + snapshots + encMeta) en una
+// única transacción. Si algo falla no se escribe nada y la clave en memoria
+// no cambia (la asigna el llamador solo tras el éxito).
+const ENC_CHECK = "mi-cartera-ok";
+async function rekeyAll(oldKey, newKey, newSalt) {
+  const snaps = await buildRekeyedSnapshots(oldKey, newKey);
+  const kv    = await encodePairs(stateFieldPairs(), newKey);
+  kv.push(["encMeta", newKey
+    ? { enabled: true, salt: Array.from(newSalt), check: await encryptValue(ENC_CHECK, newKey) }
+    : undefined]);
+  await dbWriteAtomic(kv, snaps);
 }
 
 async function restaurarSnapshot(id) {
+  if (_locked) { alert(LOCKED_MSG); return; }
   const raw = await dbGet(DB_SNAP, id);
   if (!raw) return;
   const snap = await decodeSnapshot(raw);
+  if (snap.undecryptable) {
+    alert("Este punto de restauración está cifrado con otra passphrase y no se puede descifrar.");
+    return;
+  }
+  if (!Array.isArray(snap.productos) || !snap.productos.length) {
+    alert("Este punto de restauración no contiene productos; no se restaura para no vaciar la cartera.");
+    return;
+  }
   const cuando = formatSnapDate(snap.fecha);
   if (!confirm(`¿Restaurar el punto del ${cuando}?\n\nLos datos actuales se reemplazarán por completo.`)) return;
   state.productos = clone(snap.productos);
   state.entradas  = clone(snap.entradas);
+  // Snapshots nuevos incluyen objetivos; en los antiguos se descartan los que
+  // apuntan a productos que ya no existen.
+  const ids = new Set(state.productos.map(p => p.id));
+  state.objetivos = (Array.isArray(snap.objetivos) ? clone(snap.objetivos) : (state.objetivos || []))
+    .filter(o => o.productoId == null || ids.has(o.productoId));
   state.tab       = state.productos[0]?.id || "total";
   invalidateStatsCache();
   saveState();
@@ -1690,8 +1978,9 @@ async function restaurarSnapshot(id) {
 }
 
 async function eliminarSnapshot(id) {
+  if (bloqueado()) return;
   if (!confirm("¿Eliminar este punto de restauración?")) return;
-  await dbDelete(DB_SNAP, id);
+  await enqueueWrite(() => dbDelete(DB_SNAP, id));
   await renderSnapshots();
 }
 
@@ -1731,14 +2020,17 @@ async function renderSnapshots() {
   }
   el.innerHTML = all.map(s => {
     const nEnt = Object.values(s.entradas || {}).reduce((n, l) => n + (l?.length || 0), 0);
+    const meta = s.undecryptable
+      ? (_locked ? "🔒 cifrado · desbloquea para verlo" : "🔒 cifrado con otra passphrase")
+      : `${(s.productos || []).length} producto(s) · ${nEnt} entrada(s)`;
     return `<div class="snap-item">
       <div class="snap-info">
         <div class="snap-date">${formatSnapDate(s.fecha)}</div>
-        <div class="snap-meta">${s.productos.length} producto(s) · ${nEnt} entrada(s)</div>
+        <div class="snap-meta">${meta}</div>
       </div>
       <div class="snap-actions">
-        <button class="snap-btn" data-restore="${esc(s.id)}" title="Restaurar">↻</button>
-        <button class="snap-btn danger" data-snapdel="${esc(s.id)}" title="Eliminar">✕</button>
+        ${s.undecryptable ? "" : `<button class="snap-btn" data-restore="${esc(s.id)}" title="Restaurar">↻</button>`}
+        ${_locked ? "" : `<button class="snap-btn danger" data-snapdel="${esc(s.id)}" title="Eliminar">✕</button>`}
       </div>
     </div>`;
   }).join("");
@@ -1801,7 +2093,7 @@ async function fetchCoinGeckoPrice(id) {
   priceFetching[id] = (async () => {
     try {
       const url = `${COINGECKO_BASE}?ids=${encodeURIComponent(id)}&vs_currencies=eur`;
-      const r = await fetch(url, { headers: { accept: "application/json" } });
+      const r = await fetchWithTimeout(url, { headers: { accept: "application/json" } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       const eur = data?.[id]?.eur;
@@ -1817,6 +2109,35 @@ async function fetchCoinGeckoPrice(id) {
     }
   })();
   return priceFetching[id];
+}
+
+// Varios ids de CoinGecko en UNA petición (la API pública limita a ~30 req/min:
+// pedirlos uno a uno daba 429 con varias criptos).
+async function fetchCoinGeckoBatch(ids) {
+  ids = [...new Set(ids.filter(Boolean))].filter(id => !priceFetching[id]);
+  if (!ids.length) return;
+  if (ids.length === 1) { await fetchCoinGeckoPrice(ids[0]); return; }
+  const run = (async () => {
+    try {
+      const url = `${COINGECKO_BASE}?ids=${ids.map(encodeURIComponent).join(",")}&vs_currencies=eur`;
+      const r = await fetchWithTimeout(url, { headers: { accept: "application/json" } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      ids.forEach(id => {
+        const eur = data?.[id]?.eur;
+        priceCache[id] = Number.isFinite(eur)
+          ? { eur, ts: Date.now() }
+          : { error: "Sin precio en respuesta", ts: Date.now() };   // negative-cache
+      });
+    } catch (err) {
+      console.warn("[Cartera] CoinGecko falló para", ids.join(","), err);
+      ids.forEach(id => { priceCache[id] = { error: err?.message || "error", ts: Date.now() }; });
+    } finally {
+      ids.forEach(id => delete priceFetching[id]);
+    }
+  })();
+  ids.forEach(id => { priceFetching[id] = run.then(() => Number.isFinite(priceCache[id]?.eur) ? priceCache[id] : null); });
+  await run;
 }
 
 // Twelve Data · llama al endpoint /quote (precio + divisa). Requiere API key
@@ -1852,7 +2173,7 @@ async function fetchTwelveDataPrice(ticker) {
         }
       }
       const url = `${TWELVEDATA_BASE}?${params}`;
-      const r = await fetch(url, { headers: { accept: "application/json" } });
+      const r = await fetchWithTimeout(url, { headers: { accept: "application/json" } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       if (data?.status === "error" || data?.code >= 400) {
@@ -1894,7 +2215,7 @@ async function fetchYahooPrice(ticker) {
       for (let i = 0; i < YAHOO_PROXIES.length; i++) {
         const url = YAHOO_PROXIES[i](target);
         try {
-          const r = await fetch(url, { headers: { accept: "application/json" } });
+          const r = await fetchWithTimeout(url, { headers: { accept: "application/json" } });
           if (!r.ok) { lastErr = new Error(`Proxy saturado (HTTP ${r.status})`); continue; }
           const text = await r.text();
           const trimmed = text.trimStart();
@@ -1954,7 +2275,7 @@ async function fetchYahooSeries(symbol) {
       for (let i = 0; i < YAHOO_PROXIES.length; i++) {
         const url = YAHOO_PROXIES[i](target);
         try {
-          const r = await fetch(url, { headers: { accept: "application/json" } });
+          const r = await fetchWithTimeout(url, { headers: { accept: "application/json" } });
           if (!r.ok) { lastErr = new Error(`Proxy saturado (HTTP ${r.status})`); continue; }
           const text = await r.text();
           const trimmed = text.trimStart();
@@ -1973,11 +2294,17 @@ async function fetchYahooSeries(symbol) {
           if (!tstamps.length || !closes.length) { yahooErr = new Error("Sin serie histórica"); break; }
           const serie = {};
           let last = null;
+          // Los timestamps mensuales caen a medianoche hora de la bolsa (22-23h UTC
+          // del día anterior para .DE): se pasan a la hora de la bolsa con gmtoffset
+          // y se leen en UTC para que el mes no dependa de la zona del usuario.
+          const gmtoff = Number.isFinite(result.meta?.gmtoffset) ? result.meta.gmtoffset : 0;
           for (let k = 0; k < tstamps.length; k++) {
             const c = closes[k];
             if (!Number.isFinite(c)) continue;
-            const d = new Date(tstamps[k] * 1000);
-            serie[`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`] = c;
+            // +12 h: gmtoffset es el desfase ACTUAL (invierno/verano); con medio día de
+            // margen la vela de medianoche local cae siempre en su mes, sea cual sea el horario.
+            const d = new Date((tstamps[k] + gmtoff + 12 * 3600) * 1000);
+            serie[`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`] = c;
             last = c;
           }
           const liveLast = result.meta?.regularMarketPrice;
@@ -2022,8 +2349,8 @@ async function refreshAllPricesAsync() {
   const cgBefore  = cgIds.map(id => priceCache[id]?.eur);
   const etfBefore = etfIds.map(id => provider.cache[id]?.eur);
   await Promise.all([
-    ...cgIds.map(fetchCoinGeckoPrice),
-    ...etfIds.map(provider.fetch),
+    fetchCoinGeckoBatch(cgIds),
+    ...[...new Set(etfIds)].map(provider.fetch),
   ]);
   const changedCg  = cgIds.some((id, i) => priceCache[id]?.eur !== cgBefore[i]);
   const changedEtf = etfIds.some((id, i) => provider.cache[id]?.eur !== etfBefore[i]);
@@ -2031,10 +2358,15 @@ async function refreshAllPricesAsync() {
 }
 
 function needsPriceRender() {
+  // No re-renderizar mientras el usuario escribe en un campo de la vista
+  // (se perdería lo tecleado y el foco, p. ej. la API key o la passphrase).
+  const act = document.activeElement;
+  if (act && isTypingTarget(act) && $("#main")?.contains(act)) return false;
   return state.tab === "asignacion" ||
          state.tab === "fiscal" ||
          (state.tab !== "total" && state.tab !== "proyeccion" &&
-          state.tab !== "fire" && state.tab !== "diff" && state.tab !== "benchmark");
+          state.tab !== "fire" && state.tab !== "diff" && state.tab !== "benchmark" &&
+          state.tab !== "config" && state.tab !== "resumen");
 }
 
 function priceAgeLabel(ts) {
@@ -2170,6 +2502,7 @@ function drawChartValor(filas, accent) {
       chart.legend.fit = function () { orig.call(this); this.height += 12; };
     }
   };
+  destroyChart("valor");   // evita instancias huérfanas si se redibuja sin render()
   charts.valor = new Chart(ctx, {
     type: "line",
     data: {
@@ -2233,6 +2566,7 @@ function drawChartMonteCarlo(labels, percs, aportado) {
   const ctx = $("#chartMC")?.getContext("2d");
   if (!ctx || !CHARTS_OK) return;
   const purpA = (a) => `rgba(167,139,250,${a})`;
+  destroyChart("mc");   // evita instancias huérfanas si se redibuja sin render()
   charts.mc = new Chart(ctx, {
     type: "line",
     data: {
@@ -2267,6 +2601,7 @@ function drawChartRent(filas, accent) {
   // Escala Y con la línea base de 0% resaltada respecto al resto del grid
   const sc = gridConfig(v => `${v.toFixed(0)}%`);
   sc.y.grid.color = (c) => c.tick.value === 0 ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.04)";
+  destroyChart("rent");   // evita instancias huérfanas si se redibuja sin render()
   charts.rent = new Chart(ctx, {
     type: "line",
     data: {
@@ -2295,13 +2630,15 @@ function drawChartRent(filas, accent) {
 function drawChartTirComp(data) {
   const ctx = $("#chartTirComp")?.getContext("2d");
   if (!ctx || !CHARTS_OK) return;
+  destroyChart("tirComp");   // evita instancias huérfanas si se redibuja sin render()
   charts.tirComp = new Chart(ctx, {
     type: "bar",
     data: {
       labels: data.map(d => d.nombre),
       datasets: [{
         label: "TIR",
-        data: data.map(d => d.tir != null ? +(d.tir * 100).toFixed(2) : 0),
+        // TIR desconocida → null (sin barra), no 0% (se confundía con rentabilidad nula)
+        data: data.map(d => d.tir != null ? +(d.tir * 100).toFixed(2) : null),
         backgroundColor: data.map(d => d.color + "D9"),
         borderRadius: 4,
       }]
@@ -2314,7 +2651,7 @@ function drawChartTirComp(data) {
         tooltip: { ...TOOLTIP_BASE, displayColors: false,
           callbacks: {
             title: (items) => items[0].label,
-            label: (ctx) => ` ${ctx.parsed.x>=0?"+":""}${fmt(ctx.parsed.x)}%`
+            label: (ctx) => ctx.parsed.x == null ? " TIR no disponible" : ` ${ctx.parsed.x>=0?"+":""}${fmt(ctx.parsed.x)}%`
           }
         }
       },
@@ -2331,6 +2668,7 @@ function drawChartTirComp(data) {
 function drawChartProy(labels, datasets) {
   const ctx = $("#chartProy")?.getContext("2d");
   if (!ctx || !CHARTS_OK) return;
+  destroyChart("proy");   // evita instancias huérfanas si se redibuja sin render()
   charts.proy = new Chart(ctx, {
     type: "line",
     data: { labels, datasets },
@@ -2366,6 +2704,7 @@ function drawChartHistograma(filas) {
   if (!rents.length) return;
   const counts = HIST_BUCKETS.map(b => rents.filter(r => r >= b.min && r < b.max).length);
   const colors = HIST_BUCKETS.map(b => b.max <= 0 ? "rgba(248,113,113,0.75)" : "rgba(110,231,183,0.75)");
+  destroyChart("hist");   // evita instancias huérfanas si se redibuja sin render()
   charts.hist = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2432,6 +2771,7 @@ function drawChartPeso(data) {
     }
   };
 
+  destroyChart("peso");   // evita instancias huérfanas si se redibuja sin render()
   charts.peso = new Chart(ctx, {
     type: "doughnut",
     data: {
@@ -2500,6 +2840,7 @@ function drawChartGrowth(data) {
       },
     ],
   };
+  destroyChart("growth");   // evita instancias huérfanas si se redibuja sin render()
   charts.growth = new Chart(ctx, {
     type: "line",
     data: dataWithRef,
@@ -2533,6 +2874,7 @@ function drawChartGrowth(data) {
 function drawChartContribucion(items) {
   const ctx = $("#chartContrib")?.getContext("2d");
   if (!ctx || !CHARTS_OK) return;
+  destroyChart("contrib");   // evita instancias huérfanas si se redibuja sin render()
   charts.contrib = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2560,7 +2902,12 @@ function drawChartContribucion(items) {
           }
         }
       },
-      scales: gridConfig(fmtTickEUR),
+      // indexAxis "y": el eje de euros es x; y es el de categorías (nombres).
+      // gridConfig() ponía el formateador € en y y mostraba 0, 1, 2… en vez de nombres.
+      scales: {
+        x: { grid: { color: "rgba(255,255,255,0.04)" }, border: { display: false }, ticks: { color: "#374151", callback: fmtTickEUR } },
+        y: { grid: { display: false }, border: { display: false }, ticks: { color: "#374151" } },
+      },
     }
   });
 }
@@ -2569,6 +2916,7 @@ function drawChartContribucion(items) {
 function drawChartAportPorAno(years) {
   const ctx = $("#chartAportYear")?.getContext("2d");
   if (!ctx || !CHARTS_OK) return;
+  destroyChart("aportYear");   // evita instancias huérfanas si se redibuja sin render()
   charts.aportYear = new Chart(ctx, {
     type: "bar",
     data: {
@@ -2661,6 +3009,7 @@ function renderTabs() {
 }
 
 function reorderProductos(srcId, dstId) {
+  if (bloqueado()) return;
   const si = state.productos.findIndex(p => p.id === srcId);
   const di = state.productos.findIndex(p => p.id === dstId);
   if (si === -1 || di === -1) return;
@@ -2752,7 +3101,11 @@ function bindTabDrag() {
       const el  = document.elementFromPoint(pt.clientX, pt.clientY);
       const tgt = el?.closest?.(".tab[draggable='true']");
       if (tgt && tgt.dataset.tab !== _tsrc) {
+        // Suprime solo el click sintético inmediato: render() sustituye los
+        // botones y ese click puede no llegar nunca, dejando el flag colgado y
+        // haciendo ignorar el siguiente toque legítimo.
         _touchDragHappened = true;
+        setTimeout(() => { _touchDragHappened = false; }, 400);
         reorderProductos(_tsrc, tgt.dataset.tab);
       }
       _tsrc = null;
@@ -3011,7 +3364,7 @@ function renderTabActual() {
   let pesoData = null;
   if (esTotal && state.productos.length > 1) {
     const pesoItems = state.productos.map(p => {
-      const ents = (state.entradas[p.id] || []).sort((a,b) => a.fecha.localeCompare(b.fecha));
+      const ents = [...(state.entradas[p.id] || [])].sort((a,b) => a.fecha.localeCompare(b.fecha));
       const ult = ents[ents.length - 1];
       return { nombre: p.nombre, valor: ult?.valor || 0, color: p.color };
     }).filter(d => d.valor > 0);
@@ -3135,6 +3488,7 @@ function renderHeatmap(filas) {
   filas.forEach(f => {
     if (f.rentMes == null) return;
     const [y, m] = f.fecha.split("-");
+    if (!(+m >= 1 && +m <= 12)) return;   // mes fuera de rango (dato antiguo/corrupto)
     if (!datos[y]) datos[y] = {};
     datos[y][+m - 1] = f.rentMes;
   });
@@ -3158,7 +3512,7 @@ function renderHeatmap(filas) {
       if (v == null) cells += `<div class="heat-cell empty"></div>`;
       else {
         const txtDark = Math.abs(v) / maxAbs > 0.5;
-        cells += `<div class="heat-cell" title="${MESES[m]} ${y}: ${v>=0?"+":""}${fmt(v)}%" style="background:${colorCelda(v)};color:${txtDark ? "var(--bg)" : "var(--mute)"}">${v>=0?"+":""}${v.toFixed(0)}</div>`;
+        cells += `<div class="heat-cell" title="${MESES[m]} ${y}: ${v>=0?"+":""}${fmt(v)}%" style="background:${colorCelda(v)};color:${txtDark ? "var(--bg)" : "var(--mute)"}">${(() => { const r = Math.round(v) || 0; return `${r>=0?"+":""}${r}`; })()}</div>`;   // || 0 evita "-0"
       }
     }
     inner += `<div class="heat-row">${cells}</div>`;
@@ -3772,15 +4126,17 @@ function renderProyeccion() {
 
   $("#main").innerHTML = html;
 
-  // Debounce los sliders para evitar re-render completo en cada movimiento del ratón.
-  const rerenderProy = debounce(renderProyeccion, 50);
-  $("#rangeHoriz").oninput = (e) => { state.horizonte = +e.target.value; updateRangeLabel("HORIZONTE TEMPORAL", `${state.horizonte} AÑOS`); rerenderProy(); };
+  // Sliders: durante el arrastre solo se actualiza la etiqueta; el re-render
+  // (que recrea el <input range> y cortaba el arrastre) se hace al soltar.
+  $("#rangeHoriz").oninput  = (e) => { state.horizonte = +e.target.value; updateRangeLabel("HORIZONTE TEMPORAL", `${state.horizonte} AÑOS`); };
+  $("#rangeHoriz").onchange = () => renderProyeccion();
   $$('[data-h]').forEach(b => b.onclick = () => { state.horizonte = +b.dataset.h; renderProyeccion(); });
-  $("#rangeAport").oninput = (e) => { state.aportMensual = +e.target.value; updateRangeLabel("APORTACIÓN MENSUAL", fmtE(state.aportMensual)); rerenderProy(); };
+  $("#rangeAport").oninput  = (e) => { state.aportMensual = +e.target.value; updateRangeLabel("APORTACIÓN MENSUAL", fmtE(state.aportMensual)); };
+  $("#rangeAport").onchange = () => renderProyeccion();
   if ($("#btnResetAport")) $("#btnResetAport").onclick = () => { state.aportMensual = null; renderProyeccion(); };
   const rangeInfl = $("#rangeInfl");
-  rangeInfl.oninput  = (e) => { state.inflacion = +e.target.value / 100; updateRangeLabel("INFLACIÓN ANUAL", `${fmt(state.inflacion*100,1)}%`); rerenderProy(); };
-  rangeInfl.onchange = () => saveState();   // persistir solo al soltar el slider
+  rangeInfl.oninput  = (e) => { state.inflacion = +e.target.value / 100; updateRangeLabel("INFLACIÓN ANUAL", `${fmt(state.inflacion*100,1)}%`); };
+  rangeInfl.onchange = () => { saveState(); renderProyeccion(); };   // persistir y recalcular al soltar
   $$('[data-infl]').forEach(b => b.onclick = () => { state.inflacion = +b.dataset.infl / 100; saveState(); renderProyeccion(); });
   $$('[data-prod-proy]').forEach(cb => cb.onchange = () => {
     state.proyProductos[cb.dataset.prodProy] = cb.checked;
@@ -3839,7 +4195,8 @@ function renderProyeccion() {
     });
   });
 
-  // `destroyChart("proy")` no hace falta: render() ya invocó destroyAllCharts().
+  // drawChartProy/drawChartMonteCarlo destruyen la instancia previa (este
+  // re-render no pasa por render() → destroyAllCharts()).
   drawChartProy(labels, datasets);
 
   if (mcStats.posible) {
@@ -3880,11 +4237,15 @@ function renderFIRE() {
   // Año estimado FIRE: proyecta con TIR histórica (o 6% fallback) hasta cruzar capitalObj.
   // Se usa la rentabilidad REAL (descontada la inflación) porque el capital objetivo está en
   // € de hoy y la regla de retirada ya asume retiros ajustados a inflación.
-  const tasaProy = tirHist != null && tirHist > 0 ? tirHist : 0.06;
+  const usaFallback = !(tirHist != null && tirHist > 0);
+  const tasaProy = usaFallback ? 0.06 : tirHist;
   const tasaReal = (1 + tasaProy) / (1 + infl) - 1;
-  let anoFire = null, mesesFire = null;
+  const tasaTxt  = usaFallback
+    ? `6% por defecto${tirHist != null ? ` (tu TIR histórica, ${(tirHist*100).toFixed(1)}%, no es positiva)` : ""}`
+    : `tu TIR histórica (${(tirHist*100).toFixed(1)}%)`;
+  let anoFire = null, mesesFire = null, inalcanzable = false;
   if (valorAct < capitalObj) {
-    const tasaM = tasaReal / 12;
+    const tasaM = tasaMensualEq(tasaReal);
     let v = valorAct, m = 0;
     const maxMeses = 80 * 12;   // tope 80 años para evitar loop infinito
     while (v < capitalObj && m < maxMeses) {
@@ -3893,8 +4254,10 @@ function renderFIRE() {
     }
     if (m < maxMeses) {
       mesesFire = m;
-      const f = new Date(); f.setMonth(f.getMonth() + m);
-      anoFire = f.getFullYear();
+      const h = new Date();
+      anoFire = new Date(h.getFullYear(), h.getMonth() + m, 1).getFullYear();
+    } else if (filasTot.length) {
+      inalcanzable = true;   // con estos parámetros no se llega (p. ej. rentabilidad real ≤ 0)
     }
   } else {
     mesesFire = 0;
@@ -4004,10 +4367,10 @@ function renderFIRE() {
       </div>
       <div class="kpi">
         <div class="kpi-label">AÑO ESTIMADO FIRE
-          <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Proyección determinista con tu TIR histórica (${tirHist != null ? `${(tirHist*100).toFixed(1)}%` : '6% por defecto'})${infl > 0 ? ` ajustada por inflación → rentabilidad real ${(tasaReal*100).toFixed(1)}%` : ''} y aportación mensual media de los últimos 3 meses (${fmtE(aportMensual)}). El año real puede variar significativamente.">i</span>
+          <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Proyección determinista con ${esc(tasaTxt)}${infl > 0 ? ` ajustada por inflación → rentabilidad real ${(tasaReal*100).toFixed(1)}%` : ''} y aportación mensual media de los últimos 3 meses (${fmtE(aportMensual)}). El año real puede variar significativamente.">i</span>
         </div>
         <div class="kpi-value" style="color:${anoFire ? fireColor : "var(--dimmer)"}">${anoFire ?? "—"}</div>
-        <div class="kpi-sub">${anosRest != null ? `En ${anosRest.toFixed(1)} años` : "Datos insuficientes"}</div>
+        <div class="kpi-sub">${anosRest != null ? `En ${anosRest.toFixed(1)} años` : inalcanzable ? "No alcanzable en 80 años con estos parámetros" : "Datos insuficientes"}</div>
       </div>
     </div>
 
@@ -4042,7 +4405,7 @@ function renderFIRE() {
       <div class="panel-title">EQUIVALENCIAS</div>
       <div class="fire-eq">
         <div><span class="fe-l">Capital objetivo equivale a</span> <span class="fe-v">${(capitalObj / gasto).toFixed(0)} meses de gasto</span></div>
-        <div><span class="fe-l">Con tu TIR histórica de</span> <span class="fe-v">${tirHist != null ? `${(tirHist*100).toFixed(1)}%` : '— (usando 6%)'}</span></div>
+        <div><span class="fe-l">Rentabilidad usada en la proyección</span> <span class="fe-v">${usaFallback ? `6% (por defecto${tirHist != null ? `; TIR histórica ${(tirHist*100).toFixed(1)}%` : ""})` : `${(tirHist*100).toFixed(1)}% (TIR histórica)`}</span></div>
         <div><span class="fe-l">Aportación mensual media</span> <span class="fe-v">${fmtE(aportMensual)}</span></div>
         <div><span class="fe-l">Renta pasiva mensual al alcanzar FIRE</span> <span class="fe-v" style="color:${fireColor}">${fmtE(capitalObj * regla / 12)}</span></div>
       </div>
@@ -4053,21 +4416,18 @@ function renderFIRE() {
 
   $("#main").innerHTML = html;
 
-  $("#rangeFireGasto").oninput = (e) => {
-    state.fireGasto = +e.target.value;
-    saveState();
-    renderFIRE();
-  };
+  // Sliders: durante el arrastre solo cambia la etiqueta; al soltar se guarda y
+  // se recalcula (re-renderizar en cada paso recreaba el slider y cortaba el arrastre).
+  const setVal = (el, txt) => { const v = el.parentElement.querySelector(".val"); if (v) v.textContent = txt; };
+  $("#rangeFireGasto").oninput  = (e) => { state.fireGasto = +e.target.value; setVal(e.target, fmtE(state.fireGasto)); };
+  $("#rangeFireGasto").onchange = () => { saveState(); renderFIRE(); };
   $$('[data-regla]').forEach(b => b.onclick = () => {
     state.fireRegla = parseFloat(b.dataset.regla);
     saveState();
     renderFIRE();
   });
-  $("#rangeFireInfl").oninput = (e) => {
-    state.inflacion = +e.target.value / 100;
-    saveState();
-    renderFIRE();
-  };
+  $("#rangeFireInfl").oninput  = (e) => { state.inflacion = +e.target.value / 100; setVal(e.target, `${fmt(state.inflacion*100, 1)}%`); };
+  $("#rangeFireInfl").onchange = () => { saveState(); renderFIRE(); };
   $$('[data-infl-fire]').forEach(b => b.onclick = () => {
     state.inflacion = +b.dataset.inflFire / 100;
     saveState();
@@ -4094,8 +4454,10 @@ function sugerirAportacion(productos, aporte) {
   });
   const sumGaps = conGap.reduce((s, p) => s + p.gap, 0);
   if (sumGaps === 0) {
-    // Sin gaps: reparto proporcional al objetivo
-    return conGap.map(p => ({ ...p, aportar: aporte * (p.pctObjetivo / 100) }));
+    // Sin gaps: reparto proporcional al objetivo, normalizado por la suma de
+    // objetivos (si no suman 100% se repartía de menos o de más)
+    const sumObj = conGap.reduce((s, p) => s + p.pctObjetivo, 0);
+    return conGap.map(p => ({ ...p, aportar: sumObj > 0 ? aporte * (p.pctObjetivo / sumObj) : 0 }));
   }
   if (sumGaps <= aporte) {
     // Llena cada gap y el sobrante se distribuye según objetivo entre todos
@@ -4118,7 +4480,7 @@ function renderAsignacion() {
 
   // Recolectar productos con valor actual (último valor) y % objetivo
   const items = state.productos.map(p => {
-    const ents = (state.entradas[p.id] || []);
+    const ents = [...(state.entradas[p.id] || [])].sort((a, b) => a.fecha.localeCompare(b.fecha));
     const valorActual = ents.length ? ents.at(-1).valor : 0;
     return {
       id:           p.id,
@@ -4136,6 +4498,7 @@ function renderAsignacion() {
   }));
   // Drift por producto = pctActual - pctObjetivo
   const driftMax = conPct.reduce((m, p) => Math.max(m, Math.abs(p.pctActual - p.pctObjetivo)), 0);
+  const sinObjetivos = sumObjetivo === 0;
 
   const aporte = Number.isFinite(+state.asignacionAporte) ? +state.asignacionAporte : 0;
   const sugerencias = sugerirAportacion(conPct, aporte);
@@ -4154,12 +4517,13 @@ function renderAsignacion() {
       </div>
       <div class="kpi">
         <div class="kpi-label">DRIFT MÁX</div>
-        <div class="kpi-value" style="color:${driftMax > 5 ? 'var(--red)' : driftMax > 2 ? 'var(--yellow)' : 'var(--green)'}">${fmt(driftMax)}%</div>
-        <div class="kpi-sub">Mayor desviación absoluta</div>
+        ${sinObjetivos
+          ? `<div class="kpi-value" style="color:var(--dimmer)">—</div>
+        <div class="kpi-sub">Sin objetivos definidos</div>`
+          : `<div class="kpi-value" style="color:${driftMax > 5 ? 'var(--red)' : driftMax > 2 ? 'var(--yellow)' : 'var(--green)'}">${fmt(driftMax)}%</div>
+        <div class="kpi-sub">Mayor desviación absoluta</div>`}
       </div>
     </div>`;
-
-  const sinObjetivos = sumObjetivo === 0;
 
   let tablaActualHTML;
   if (sinObjetivos) {
@@ -4253,10 +4617,13 @@ function renderAsignacion() {
 
   // Bindings
   if ($("#asigAporte")) {
-    $("#asigAporte").oninput = debounce((e) => {
-      state.asignacionAporte = parseFloat(e.target.value) || 0;
-      renderAsignacion();
-    }, 200);
+    // Recalcular al confirmar (Enter o salir del campo): re-renderizar mientras
+    // se teclea sustituía el input, perdía el foco y cerraba el teclado en iOS.
+    $("#asigAporte").onchange = (e) => {
+      const v = parseNum(e.target.value, true);
+      state.asignacionAporte = Number.isFinite(v) && v > 0 ? v : 0;
+      rerenderTrasEdicion(() => { if (state.tab === "asignacion") renderAsignacion(); });
+    };
   }
   $$('[data-aporte]').forEach(b => b.onclick = () => {
     state.asignacionAporte = +b.dataset.aporte;
@@ -4308,10 +4675,27 @@ function renderDiff() {
     </div>
     <div class="panel"><div class="diff-loading">Cargando snapshots…</div></div>
   `;
-  listarSnapshots().then(snaps => renderDiffSync(snaps));
+  // Token de petición: si el usuario cambia de vista (o de selección) mientras
+  // se descifran los snapshots, la respuesta obsoleta se descarta y no pisa #main.
+  const req = ++_diffReq;
+  listarSnapshots()
+    .then(snaps => {
+      if (req !== _diffReq || state.tab !== "diff") return;
+      // Los que no se pueden descifrar no son comparables
+      const legibles = snaps.filter(sn => !sn.undecryptable);
+      renderDiffSync(legibles, snaps.length - legibles.length);
+    })
+    .catch(err => {
+      console.error("[Cartera] Error cargando snapshots", err);
+      if (req === _diffReq && state.tab === "diff") {
+        const box = $("#main .diff-loading");
+        if (box) box.textContent = "No se pudieron cargar los snapshots.";
+      }
+    });
 }
+let _diffReq = 0;
 
-function renderDiffSync(snaps) {
+function renderDiffSync(snaps, ilegibles = 0) {
   const accent = "#FB923C";
   const opciones = [
     { id: "current", label: "Estado actual" },
@@ -4327,8 +4711,11 @@ function renderDiffSync(snaps) {
         </div>
       </div>
       <div class="panel"><div class="empty" style="padding:60px 0">
-        <div class="empty-title">SIN SNAPSHOTS GUARDADOS</div>
-        <div class="empty-sub">Crea al menos uno desde el menú lateral · <kbd>S</kbd></div>
+        ${ilegibles
+          ? `<div class="empty-title">SNAPSHOTS NO LEGIBLES</div>
+        <div class="empty-sub">${ilegibles} snapshot(s) ${_locked ? "cifrados: desbloquea los datos para compararlos" : "cifrados con otra passphrase"}</div>`
+          : `<div class="empty-title">SIN SNAPSHOTS GUARDADOS</div>
+        <div class="empty-sub">Crea al menos uno desde el menú lateral · <kbd>S</kbd></div>`}
       </div></div>
     `;
     return;
@@ -4644,16 +5031,21 @@ function renderFiscal() {
     </div>
   `;
 
-  // Tax-loss harvesting
-  const tlhHTML = (perdedores.length && ganadores.length && totalVender === 0) ? `
+  // Tax-loss harvesting: sobre las ganancias/pérdidas LATENTES de cada producto.
+  // (Antes se filtraba por la plusvalía simulada, que vale 0 cuando no se simula
+  // ninguna venta → el panel no aparecía nunca.)
+  const latPerdedores = filas.filter(f => f.ganancia < 0);
+  const latGanadores  = filas.filter(f => f.ganancia > 0);
+  const tlhHTML = (latPerdedores.length && latGanadores.length && totalVender === 0) ? `
     <div class="panel">
       <div class="panel-title">💡 SUGERENCIA · TAX-LOSS HARVESTING</div>
       <div class="fiscal-tlh">
-        <p>Tienes ${perdedores.length} producto(s) con pérdidas latentes que podrían compensar futuras ganancias:</p>
+        <p>Tienes ${latPerdedores.length} producto(s) con pérdidas latentes que podrían compensar ganancias:</p>
         <ul>
-          ${perdedores.map(p => `<li><strong>${esc(p.nombre)}</strong>: <span style="color:var(--red)">${fmtE(p.ganancia)}</span></li>`).join("")}
+          ${latPerdedores.map(p => `<li><strong>${esc(p.nombre)}</strong>: <span style="color:var(--red)">${fmtE(p.ganancia)}</span></li>`).join("")}
         </ul>
-        <p class="fiscal-tlh-info">Si materializas estas pérdidas vendiéndolas, podrás compensar hasta ${fmtE(Math.abs(perdedores.reduce((s,p)=>s+p.ganancia,0)))} de ganancias futuras (4 años) y ahorrar impuestos.</p>
+        <p class="fiscal-tlh-info">Si materializas estas pérdidas vendiéndolas, podrás compensar hasta ${fmtE(Math.abs(latPerdedores.reduce((s,p)=>s+p.ganancia,0)))} de ganancias del mismo año o de los 4 siguientes.</p>
+        <p class="fiscal-tlh-info">⚠ Regla antiaplicación (art. 33.5 LIRPF): si recompras valores homogéneos en los 2 meses anteriores o posteriores a la venta, la pérdida no se computa hasta que vendas esos nuevos valores.</p>
       </div>
     </div>` : "";
 
@@ -4662,6 +5054,7 @@ function renderFiscal() {
       <div>
         <h2 style="color:${accent}">FISCALIDAD · D-100 SIMULADO</h2>
         <div class="subtitle">Estimación informativa de plusvalías · No es asesoramiento fiscal</div>
+        <div class="subtitle">En ventas parciales se usa el coste medio proporcional; Hacienda aplica FIFO (las participaciones más antiguas se venden primero), por lo que la plusvalía real puede diferir.</div>
       </div>
     </div>
     ${kpisHTML}
@@ -4671,13 +5064,15 @@ function renderFiscal() {
   `;
 
   // Bindings de los inputs por producto
+  // Recalcular al confirmar (Enter o salir del campo): re-renderizar mientras se
+  // teclea sustituía el input, perdía el foco y cerraba el teclado en iOS.
   $$('[data-fiscal-vender]').forEach(inp => {
-    inp.oninput = debounce((e) => {
+    inp.onchange = (e) => {
       const id = e.target.dataset.fiscalVender;
-      const v  = parseFloat(e.target.value) || 0;
-      state.fiscalSim[id] = Math.max(0, v);
-      renderFiscal();
-    }, 200);
+      const v  = parseNum(e.target.value, true);
+      state.fiscalSim[id] = Number.isFinite(v) ? Math.max(0, v) : 0;
+      rerenderTrasEdicion(() => { if (state.tab === "fiscal") renderFiscal(); });
+    };
   });
   $$('[data-pct]').forEach(b => b.onclick = () => {
     const pct = parseFloat(b.dataset.pct) / 100;
@@ -4689,7 +5084,7 @@ function renderFiscal() {
 function renderObjetivos(productoId, valorActual) {
   const norm = v => (v == null || v === "total") ? null : v;
   const target = norm(productoId);
-  const rel = state.objetivos.filter(o => norm(o.productoId) === target);
+  const rel = state.objetivos.filter(o => norm(o.productoId) === target && +o.meta > 0);
   if (!rel.length) return "";
   const items = rel.map(o => {
     const pct   = o.meta > 0 ? Math.min((valorActual / o.meta) * 100, 100) : 0;
@@ -4887,6 +5282,7 @@ function renderBenchmarkSync(data, bench) {
 function drawChartBenchmark(labels, cartera, indice, nombreIdx, accent) {
   const ctx = $("#chartBench")?.getContext("2d");
   if (!ctx || !CHARTS_OK) return;
+  destroyChart("bench");   // evita instancias huérfanas si se redibuja sin render()
   charts.bench = new Chart(ctx, {
     type: "line",
     data: {
@@ -4920,7 +5316,7 @@ function drawChartBenchmark(labels, cartera, indice, nombreIdx, accent) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function openEntryModal(entry = null) {
-  if (RESERVED_IDS.has(state.tab)) return;
+  if (RESERVED_IDS.has(state.tab) || bloqueado()) return;
   const prod = state.productos.find(p => p.id === state.tab);
   if (!prod) return;   // tab huérfano: no crear entradas sin producto
   state.editEntradaId = entry?.id || null;
@@ -4938,28 +5334,41 @@ function openEntryModal(entry = null) {
   $("#meNota").value            = entry?.nota     ?? "";
   recalcMETotal();
   $("#meSave").style.background = accent;
-  $(".modal", $("#modalEntrada")).style.border = `1px solid ${accent}25`;
+  // $() solo acepta un selector: el 2º argumento se ignoraba y cogía el primer .modal del documento
+  $("#modalEntrada .modal").style.border = `1px solid ${accent}25`;
   $("#modalEntrada").classList.add("open");
 }
 
 function recalcMETotal() {
-  const t = (parseFloat($("#meManual").value)   || 0)
-          + (parseFloat($("#meSaveback").value) || 0)
-          + (parseFloat($("#meRoundup").value)  || 0);
+  const n = (sel) => { const v = parseNum($(sel).value, true); return Number.isFinite(v) ? v : 0; };
+  const t = n("#meManual") + n("#meSaveback") + n("#meRoundup");
   $("#meTotal").textContent = `Total: ${fmtE(t)}`;
 }
 
 function saveEntry() {
-  const fecha = ($("#meFecha").value || "").trim();
-  if (!/^\d{4}-\d{2}$/.test(fecha)) { alert("Selecciona un mes válido para la entrada."); return; }
+  // Acepta también MM/AAAA o "ene-24" donde type=month se muestra como texto
+  const fecha = normalizarFechaCSV($("#meFecha").value);
+  if (!RE_FECHA.test(fecha)) { alert("Introduce un mes válido para la entrada (formato AAAA-MM, p. ej. 2026-10)."); return; }
+  // Importes: vacío → 0; texto no numérico → aviso (antes se guardaba 0 en silencio)
+  const leer = (sel, nombre) => {
+    const raw = ($(sel).value || "").trim();
+    if (!raw) return 0;
+    const v = parseNum(raw, true);
+    if (!Number.isFinite(v)) { alert(`El campo ${nombre} no es un número válido: "${raw}"`); return null; }
+    return v;
+  };
+  if (!($("#meValor").value || "").trim()) { alert("Introduce el VALOR REAL ACTUAL de la posición."); return; }
+  const manual    = leer("#meManual", "MANUAL");        if (manual    == null) return;
+  const saveback  = leer("#meSaveback", "SAVEBACK");    if (saveback  == null) return;
+  const roundup   = leer("#meRoundup", "ROUND-UP");     if (roundup   == null) return;
+  const valor     = leer("#meValor", "VALOR");          if (valor     == null) return;
+  const dividendo = leer("#meDividendo", "RENTA");      if (dividendo == null) return;
+  if (valor < 0)     { alert("El valor de la posición no puede ser negativo."); return; }
+  if (dividendo < 0) { alert("La renta cobrada no puede ser negativa."); return; }
   const e = {
     id:       state.editEntradaId || Date.now(),
     fecha,
-    manual:    parseFloat($("#meManual").value)    || 0,
-    saveback:  parseFloat($("#meSaveback").value)  || 0,
-    roundup:   parseFloat($("#meRoundup").value)   || 0,
-    valor:     parseFloat($("#meValor").value)     || 0,
-    dividendo: parseFloat($("#meDividendo").value) || 0,
+    manual, saveback, roundup, valor, dividendo,
     nota:      ($("#meNota").value || "").trim(),
   };
   const pid   = state.tab;
@@ -4986,6 +5395,7 @@ function saveEntry() {
 }
 
 function openProdModal(prod = null) {
+  if (bloqueado()) return;
   state.editProdId = prod?.id || null;
   $("#mpNombre").value      = prod?.nombre || "";
   $("#mpRef").value         = prod?.referencia || "";
@@ -5079,7 +5489,7 @@ async function searchTickers(q) {
   if (state.etfProvider !== "yahoo" && apiKey) {
     try {
       const url = `https://api.twelvedata.com/symbol_search?symbol=${encodeURIComponent(q)}&outputsize=12&apikey=${encodeURIComponent(apiKey)}`;
-      const r = await fetch(url, { headers: { accept: "application/json" } });
+      const r = await fetchWithTimeout(url, { headers: { accept: "application/json" } });
       if (!r.ok) return [];
       const data = await r.json();
       return (data?.data || []).slice(0, 8).map(d => ({
@@ -5093,7 +5503,7 @@ async function searchTickers(q) {
   const target = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
   for (const proxy of YAHOO_PROXIES) {
     try {
-      const r = await fetch(proxy(target), { headers: { accept: "application/json" } });
+      const r = await fetchWithTimeout(proxy(target), { headers: { accept: "application/json" } });
       if (!r.ok) continue;
       const text = await r.text();
       if (!text.trimStart().startsWith("{")) continue;
@@ -5203,6 +5613,7 @@ function saveProd() {
 }
 
 function openObjetivosModal() {
+  if (bloqueado()) return;
   const sel = $("#objProducto");
   sel.innerHTML = [
     { id: "total", nombre: "Cartera Total" },
@@ -5260,7 +5671,7 @@ function renderObjetivosList() {
   el.innerHTML = html;
   $$("[data-obj-del]").forEach(b => b.onclick = () => {
     if (!confirm("¿Eliminar este objetivo?")) return;
-    state.objetivos = state.objetivos.filter(o => o.id !== b.dataset.objDel);
+    state.objetivos = state.objetivos.filter(o => String(o.id) !== b.dataset.objDel);   // ids numéricos de imports antiguos
     saveState();
     renderObjetivosList();
     render();
@@ -5329,117 +5740,158 @@ function openChangelog() {
 
 // ── Modal de SEGURIDAD (cifrado local) ───────────────────────────────────
 
+// Pide una passphrase en un modal propio con <input type=password> (prompt()
+// la mostraba en claro). Resuelve con el texto o null si se cancela.
+function askPassphrase(msg, titulo = "PASSPHRASE") {
+  return new Promise(resolve => {
+    const bg = $("#modalPass"), input = $("#ppInput"), form = $("#ppForm");
+    $("#ppTitle").textContent = titulo;
+    $("#ppMsg").textContent   = msg;
+    input.value = "";
+    bg.classList.add("open");
+    setTimeout(() => input.focus(), 30);
+    const done = (val) => {
+      bg.classList.remove("open");
+      form.onsubmit = null; $("#ppCancel").onclick = null; input.onkeydown = null;
+      resolve(val);
+    };
+    form.onsubmit = (e) => { e.preventDefault(); done(input.value); };
+    $("#ppCancel").onclick = () => done(null);
+    input.onkeydown = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(null); }
+    };
+  });
+}
+
+// Deriva la clave y comprueba que la passphrase es correcta. Usa el testigo
+// cifrado `encMeta.check`; en BDs antiguas sin testigo, cualquier campo cifrado.
+// Lanza si la passphrase es incorrecta.
+// info.verificada indica si la passphrase se ha comprobado de verdad contra algún dato.
+async function verifyPassphrase(encMeta, pass, info = {}) {
+  const key = await deriveKey(pass, new Uint8Array(encMeta.salt));
+  info.verificada = false;
+  if (encMeta.check) {
+    if (await decryptValue(encMeta.check, key) !== ENC_CHECK) throw new Error("Passphrase incorrecta");
+    info.verificada = true;
+    return key;
+  }
+  for (const [k] of stateFieldPairs()) {
+    const blob = await dbGet(DB_KV, k);
+    if (blob?.__enc) { await decryptValue(blob, key); info.verificada = true; return key; }   // lanza si no cuadra
+  }
+  // Sin campos cifrados en el KV: probar con un snapshot cifrado
+  const snap = (await dbAll(DB_SNAP)).find(sn => sn?.enc);
+  if (snap) { await decryptValue(snap.enc, key); info.verificada = true; }
+  return key;   // si no hay nada cifrado, no se puede verificar
+}
+
+function cifradoNoPermitido() {
+  if (_locked) { alert(LOCKED_MSG); return true; }
+  if (!cryptoDisponible()) {
+    alert("El cifrado necesita un contexto seguro (https o localhost). Abre la app desde su URL, no como archivo local.");
+    return true;
+  }
+  return false;
+}
+
 async function enableEncryption() {
+  if (cifradoNoPermitido()) return;
   const pass = $("#segPass1").value;
   if (pass.length < 8) return;
   if (!confirm("¿Activar cifrado AES-256?\n\nLa passphrase no se puede recuperar. Guárdala en un sitio seguro.")) return;
   try {
-    await awaitSave();
-    const salt = genSalt();
-    _cryptoKey = await deriveKey(pass, salt);
-    await dbPut(DB_KV, { enabled: true, salt: Array.from(salt) }, "encMeta");
-    // Re-escribir todo el estado cifrado
-    await writeField("productos", state.productos);
-    await writeField("entradas",  state.entradas);
-    await writeField("objetivos", state.objetivos);
-    await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
-    await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
-    await writeField("etfProvider", state.etfProvider || "twelvedata");
-    await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
-    await writeField("logros", state.logros || {});
-    await reencryptSnapshots(null, _cryptoKey);   // cifrar snapshots existentes
+    // En la cola de escritura y en una sola transacción: ni un saveState
+    // concurrente ni un cierre a mitad pueden dejar campos con claves mezcladas.
+    await enqueueWrite(async () => {
+      const salt = genSalt();
+      const key  = await deriveKey(pass, salt);
+      await rekeyAll(null, key, salt);
+      _cryptoKey = key;   // solo tras confirmar la transacción
+    });
     renderSegBody();
     flash();
     alert("✓ Cifrado activado. La próxima vez que abras la app se te pedirá la passphrase.");
   } catch (err) {
     console.error("[Cartera] Error activando cifrado", err);
-    alert("Error al activar cifrado: " + (err?.message || err));
+    alert("Error al activar cifrado (no se ha modificado nada): " + (err?.message || err));
   }
 }
 
 async function disableEncryption() {
+  if (cifradoNoPermitido()) return;
+  if (!_cryptoKey) { alert("El cifrado no está activo en esta sesión."); return; }
   if (!confirm("¿Desactivar cifrado?\n\nLos datos volverán a guardarse en claro.")) return;
   try {
-    await awaitSave();
-    const oldKey = _cryptoKey;
-    _cryptoKey = null;
-    await reencryptSnapshots(oldKey, null);   // descifrar snapshots existentes
-    await dbDelete(DB_KV, "encMeta");
-    // Re-escribir todo el estado sin cifrar
-    await dbPut(DB_KV, state.productos, "productos");
-    await dbPut(DB_KV, state.entradas,  "entradas");
-    await dbPut(DB_KV, state.objetivos, "objetivos");
-    await dbPut(DB_KV, { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion }, "firePrefs");
-    await dbPut(DB_KV, state.twelveDataApiKey || "", "twelveDataApiKey");
-    await dbPut(DB_KV, state.etfProvider || "twelvedata", "etfProvider");
-    await dbPut(DB_KV, state.benchmarkSymbol || "EUNL.DE", "benchmarkSymbol");
-    await dbPut(DB_KV, state.logros || {}, "logros");
+    await enqueueWrite(async () => {
+      await rekeyAll(_cryptoKey, null);
+      _cryptoKey = null;
+    });
     renderSegBody();
     flash();
     alert("✓ Cifrado desactivado.");
   } catch (err) {
     console.error("[Cartera] Error desactivando cifrado", err);
-    alert("Error al desactivar: " + (err?.message || err));
+    alert("Error al desactivar (no se ha modificado nada): " + (err?.message || err));
   }
 }
 
 async function changePassphrase() {
-  const actual = prompt("Introduce la passphrase ACTUAL:");
+  if (cifradoNoPermitido()) return;
+  const actual = await askPassphrase("Introduce la passphrase ACTUAL:", "CAMBIAR PASSPHRASE");
   if (!actual) return;
-  // Verificar passphrase actual descifrando productos
   try {
     const encMeta = await dbGet(DB_KV, "encMeta");
-    const salt    = new Uint8Array(encMeta.salt);
-    const key     = await deriveKey(actual, salt);
-    const blob    = await dbGet(DB_KV, "productos");
-    await decryptValue(blob, key);   // si falla, lanza
+    if (!encMeta?.enabled) throw new Error("sin cifrado");
+    await verifyPassphrase(encMeta, actual);
   } catch {
     alert("Passphrase incorrecta.");
     return;
   }
-  const nueva = prompt("Nueva passphrase (mín. 8 caracteres):");
-  if (!nueva || nueva.length < 8) { alert("Passphrase demasiado corta."); return; }
-  const confirma = prompt("Confirma la nueva passphrase:");
+  const nueva = await askPassphrase("Nueva passphrase (mín. 8 caracteres):", "CAMBIAR PASSPHRASE");
+  if (!nueva || nueva.length < 8) { if (nueva != null) alert("Passphrase demasiado corta."); return; }
+  const confirma = await askPassphrase("Confirma la nueva passphrase:", "CAMBIAR PASSPHRASE");
+  if (confirma == null) return;
   if (nueva !== confirma) { alert("Las passphrases no coinciden."); return; }
   try {
-    await awaitSave();
-    // La clave de sesión actual es con la que están cifrados KV y snapshots;
-    // hay que capturarla ANTES de sustituirla por la nueva.
-    const oldKey  = _cryptoKey;
-    const newSalt = genSalt();
-    _cryptoKey    = await deriveKey(nueva, newSalt);
-    await dbPut(DB_KV, { enabled: true, salt: Array.from(newSalt) }, "encMeta");
-    await writeField("productos", state.productos);
-    await writeField("entradas",  state.entradas);
-    await writeField("objetivos", state.objetivos);
-    await writeField("firePrefs", { gasto: state.fireGasto, regla: state.fireRegla, inflacion: state.inflacion });
-    await writeField("twelveDataApiKey", state.twelveDataApiKey || "");
-    await writeField("etfProvider", state.etfProvider || "twelvedata");
-    await writeField("benchmarkSymbol", state.benchmarkSymbol || "EUNL.DE");
-    await writeField("logros", state.logros || {});
-    await reencryptSnapshots(oldKey, _cryptoKey);   // re-cifrar snapshots con la nueva clave
+    await enqueueWrite(async () => {
+      const newSalt = genSalt();
+      const newKey  = await deriveKey(nueva, newSalt);
+      await rekeyAll(_cryptoKey, newKey, newSalt);
+      _cryptoKey = newKey;
+    });
     renderSegBody();
     flash();
     alert("✓ Passphrase cambiada.");
   } catch (err) {
-    alert("Error al cambiar passphrase: " + (err?.message || err));
+    console.error("[Cartera] Error cambiando passphrase", err);
+    alert("Error al cambiar passphrase (no se ha modificado nada): " + (err?.message || err));
   }
 }
 
 // Llamada al inicio si la BD está cifrada. Pide passphrase hasta 3 intentos.
 async function promptUnlock(encMeta) {
-  const salt = new Uint8Array(encMeta.salt);
+  if (!cryptoDisponible()) {
+    alert("Los datos están cifrados y este navegador no permite descifrarlos aquí (hace falta https o localhost). Abre la app desde su URL.");
+    return false;
+  }
   for (let intento = 1; intento <= 3; intento++) {
-    const pass = prompt(intento === 1
-      ? "🔒 MI CARTERA · Cifrado activo\n\nIntroduce tu passphrase:"
-      : `Passphrase incorrecta (intento ${intento}/3):`);
+    const pass = await askPassphrase(intento === 1
+      ? "🔒 Cifrado activo\n\nIntroduce tu passphrase:"
+      : `Passphrase incorrecta (intento ${intento}/3):`, "MI CARTERA");
     if (pass == null) return false;     // usuario canceló
     try {
-      const key  = await deriveKey(pass, salt);
-      // Verificar descifrando productos
-      const blob = await dbGet(DB_KV, "productos");
-      if (blob) await decryptValue(blob, key);
+      const info = {};
+      const key = await verifyPassphrase(encMeta, pass, info);
       _cryptoKey = key;
+      // BDs antiguas sin testigo: añadirlo para verificar correctamente en adelante,
+      // pero solo si la passphrase se ha comprobado contra datos reales (si no, una
+      // passphrase mal tecleada quedaría fijada como buena para siempre).
+      if (!encMeta.check && info.verificada) {
+        try {
+          const check = await encryptValue(ENC_CHECK, key);
+          await enqueueWrite(() => dbPut(DB_KV, { ...encMeta, check }, "encMeta"));
+        } catch (err) { console.warn("[Cartera] No se pudo guardar el testigo de passphrase", err); }
+      }
       return true;
     } catch {
       if (intento === 3) {
@@ -5485,9 +5937,13 @@ function anyModalOpen() {
 }
 
 function handleShortcut(e) {
-  // ESC siempre funciona, también cerrando inputs
+  // Composición IME en curso (acentos, CJK…): la tecla no es un atajo
+  if (e.isComposing || e.keyCode === 229) return;
+  // ESC siempre funciona, también cerrando inputs. Cierra solo el modal de más
+  // arriba (el último abierto en el DOM); el de passphrase gestiona su propio Esc.
   if (e.key === "Escape") {
-    $$('.modal-bg.open').forEach(m => m.classList.remove("open"));
+    const abiertos = $$('.modal-bg.open').filter(m => m.id !== "modalPass");
+    if (abiertos.length) { abiertos.at(-1).classList.remove("open"); return; }
     closeDrawer();
     hideSnapToast();
     return;
@@ -5496,6 +5952,8 @@ function handleShortcut(e) {
   if (isTypingTarget(e.target)) return;
   // Modificadores → no es nuestro atajo
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // Tecla mantenida pulsada: no repetir acciones (S creaba decenas de snapshots)
+  if (e.repeat) return;
 
   // Si hay modal abierto, sólo ESC funciona
   if (anyModalOpen()) return;
@@ -5567,6 +6025,7 @@ function handleShortcut(e) {
         if (ids[i]) {
           e.preventDefault();
           state.tab = ids[i];
+          closeDrawer();
           render();
         }
       }
@@ -5586,6 +6045,7 @@ function bindCommon() {
   });
   $$('[data-del]').forEach(b => b.onclick = () => {
     const id = b.dataset.del;
+    if (bloqueado()) return;
     if (!confirm("¿Eliminar esta entrada?")) return;
     state.entradas[state.tab] = state.entradas[state.tab].filter(x => String(x.id) !== String(id));
     saveState();
@@ -5601,6 +6061,7 @@ function bindCommon() {
   };
   const btnDel = $("#btnDelProd");
   if (btnDel) btnDel.onclick = () => {
+    if (bloqueado()) return;
     const pid     = state.tab;
     const nEnts   = (state.entradas[pid] || []).length;
     const prod    = state.productos.find(p => p.id === pid);
@@ -5652,7 +6113,9 @@ function bindGlobals() {
   $("#btnBenchmark").onclick     = () => { state.tab = "benchmark"; closeDrawer(); render(); };
   $("#btnLogros").onclick        = abrirLogros;
   $("#btnChangelog").onclick     = openChangelog;
-  $("#btnNewProdDrawer").onclick = openProdModal;
+  // Envolver: pasar la función directamente le daba el MouseEvent como `prod`
+  // y abría el modal en modo "EDITAR PRODUCTO" con la divisa vacía.
+  $("#btnNewProdDrawer").onclick = () => openProdModal();
 
   // Toast
   $("#snapToastClose").onclick   = hideSnapToast;
@@ -5710,7 +6173,17 @@ function bindGlobals() {
   }
 
   $$('[data-close]').forEach(b => b.onclick = () => $("#" + b.dataset.close).classList.remove("open"));
-  $$('.modal-bg').forEach(bg => bg.onclick = (e) => { if (e.target === bg) bg.classList.remove("open"); });
+  // Cerrar al pulsar el fondo solo si el gesto EMPEZÓ en el fondo: seleccionar
+  // texto en un input y soltar fuera cerraba el modal y perdía lo escrito.
+  $$('.modal-bg').forEach(bg => {
+    if (bg.id === "modalPass") return;   // se resuelve con sus propios botones
+    let downEnFondo = false;
+    bg.addEventListener("pointerdown", (e) => { downEnFondo = e.target === bg; });
+    bg.onclick = (e) => {
+      if (e.target === bg && downEnFondo) bg.classList.remove("open");
+      downEnFondo = false;
+    };
+  });
 
   // PDF export (lazy-load de libs)
   $("#btnPDF").onclick = exportarPDF;
@@ -5845,7 +6318,7 @@ function renderConfig() {
   // Apariencia
   $$('[data-theme]').forEach(b => b.onclick = () => {
     const tema = b.dataset.theme;
-    localStorage.setItem("tema", tema);
+    lsSet("tema", tema);
     applyTheme(tema);
     render();
   });
@@ -5891,8 +6364,23 @@ function saveConfig() {
 async function renderSegBody() {
   const body = $("#seg-body");
   if (!body) return;
-  const encMeta = await dbGet(DB_KV, "encMeta");
+  if (_locked) {
+    // Con la app bloqueada el estado en memoria está vacío: cualquier operación
+    // de cifrado lo escribiría encima de los datos reales.
+    body.innerHTML = `
+      <div class="seg-status seg-off"><span class="seg-dot"></span> DATOS BLOQUEADOS</div>
+      <p class="seg-info">Los datos no se han cargado. Recarga la página e introduce la passphrase para gestionar el cifrado.</p>`;
+    return;
+  }
+  let encMeta = null;
+  try { encMeta = await dbGet(DB_KV, "encMeta"); } catch { /* sin BD */ }
   const enabled = !!encMeta?.enabled;
+  if (!enabled && !cryptoDisponible()) {
+    body.innerHTML = `
+      <div class="seg-status seg-off"><span class="seg-dot"></span> SIN CIFRADO</div>
+      <p class="seg-info">El cifrado requiere abrir la app por https o localhost (no disponible al abrirla como archivo local).</p>`;
+    return;
+  }
   body.innerHTML = enabled ? `
     <div class="seg-status seg-on"><span class="seg-dot"></span> CIFRADO ACTIVO</div>
     <p class="seg-info">Tus datos están cifrados con AES-256. Necesitarás la passphrase cada vez que abras la app.</p>
@@ -5970,15 +6458,19 @@ function applyTheme(tema) {
 function toggleTheme() {
   const isLight = document.documentElement.classList.toggle("light");
   const tema    = isLight ? "light" : "dark";
-  localStorage.setItem("tema", tema);
+  lsSet("tema", tema);
   applyTheme(tema);
   render();   // los charts deben recrearse con los nuevos colores
 }
 
 // ── PDF export (lazy-load) ───────────────────────────────────────────────
-function loadScript(src) {
+function loadScript(src, integrity) {
   return new Promise((resolve, reject) => {
     const s = document.createElement("script");
+    // CORS: así el Service Worker recibe una respuesta normal (no opaca) que
+    // puede validar antes de cachear
+    s.crossOrigin = "anonymous";
+    if (integrity) s.integrity = integrity;   // SRI: rechaza el script si el CDN lo altera
     s.src = src; s.onload = resolve; s.onerror = reject;
     document.head.appendChild(s);
   });
@@ -5988,8 +6480,10 @@ let _pdfLibsLoaded = false;
 async function ensurePDFLibs() {
   if (_pdfLibsLoaded) return;
   await Promise.all([
-    loadScript("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"),
-    loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"),
+    loadScript("https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js",
+      "sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/"),
+    loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+      "sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H"),
   ]);
   _pdfLibsLoaded = true;
 }
@@ -6017,7 +6511,7 @@ async function exportarPDF() {
       pdf.addImage(imgData, "PNG", 0, position, pdfW, imgH);
       heightLeft -= pdfH;
     }
-    const fecha = new Date().toISOString().slice(0, 10);
+    const fecha = hoyDia();
     pdf.save(`mi-cartera-${fecha}.pdf`);
     flash();
     closeDrawer();
@@ -6182,12 +6676,28 @@ async function descargarWrappedPNG(year) {
 
 (async function init() {
   // Aplicar tema antes de cualquier render para evitar parpadeo
-  applyTheme(localStorage.getItem("tema") || "dark");
+  applyTheme(lsGet("tema") || "dark");
 
-  await loadState();
-  render();
-  bindGlobals();
-  checkSnapReminder();   // el toast de recordatorio sigue activo
+  try {
+    await loadState();
+  } catch (err) {
+    // loadState ya captura sus errores; esto cubre fallos inesperados
+    console.error("[Cartera] Error inesperado al cargar", err);
+    _locked = true;
+  }
+  // Los listeners globales primero: si un render falla, el drawer, los modales
+  // y los atajos deben seguir funcionando.
+  try { bindGlobals(); } catch (err) { console.error("[Cartera] Error enlazando eventos", err); }
+  try {
+    render();
+  } catch (err) {
+    console.error("[Cartera] Error renderizando", err);
+    const main = $("#main");
+    if (main) main.innerHTML = `<div class="panel"><div class="panel-title">ERROR</div>
+      <p class="seg-info">No se pudo mostrar esta vista: ${esc(err?.message || err)}. Prueba otra pestaña desde el menú o restaura un punto de guardado.</p></div>`;
+  }
+  if (_locked) showSaveError(LOCKED_MSG);
+  try { checkSnapReminder(); } catch { /* no crítico */ }   // el toast de recordatorio sigue activo
 
   // Solicitar almacenamiento persistente: evita que el navegador borre
   // IndexedDB por falta de espacio o inactividad (fire-and-forget).

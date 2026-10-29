@@ -173,6 +173,13 @@
         <div class="di-sub">Backup completo (productos, entradas, objetivos)</div>
       </div>
     </button>
+    <button class="drawer-item" id="btnShareJSON">
+      <span class="di-icon">⇪</span>
+      <div class="di-body">
+        <div class="di-title">COMPARTIR COPIA</div>
+        <div class="di-sub">Enviar el backup a Drive, correo… (fuera del navegador)</div>
+      </div>
+    </button>
     <button class="drawer-item" id="btnImportJSON">
       <span class="di-icon">↓</span>
       <div class="di-body">
@@ -195,7 +202,7 @@
       </div>
     </button>
     <input type="file" id="fileImport" accept=".csv,text/csv" style="display:none">
-    <input type="file" id="fileImportJSON" accept=".json,application/json" style="display:none">
+    <input type="file" id="fileImportJSON" accept=".json,.txt,application/json,text/plain" style="display:none">
   </div>
 
   <div class="drawer-section drawer-section-kbd">
@@ -291,10 +298,14 @@
       <label>RENTA COBRADA <span class="lbl-hint">(dividendo o cupón, este mes, opcional)</span></label>
       <input type="text" inputmode="decimal" placeholder="0" id="meDividendo">
     </div>
-    <div class="field" style="margin-bottom:24px">
+    <div class="field" style="margin-bottom:16px">
       <label>NOTA DEL MES (opcional)</label>
       <textarea rows="2" id="meNota" placeholder="Ej: corrección de mercado, aporte extra por bonus..."></textarea>
     </div>
+    <label class="chk-row" for="meBackup">
+      <input type="checkbox" id="meBackup">
+      <span>Descargar copia de seguridad (.json) al guardar</span>
+    </label>
     <button class="save-btn" id="meSave">GUARDAR</button>
   </div>
 </div>
@@ -343,6 +354,20 @@
 
     <!-- Entradas del changelog -->
     <div class="cl-list">
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.11</span>
+          <span class="cl-ver-date">Octubre 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Copia de seguridad al guardar</strong>: el modal de entrada incluye la casilla "Descargar copia de seguridad (.json) al guardar" (activada por defecto; recuerda tu última elección).</li>
+          <li><strong>Compartir copia</strong>: nueva opción del menú que abre el menú Compartir del móvil con el backup adjunto (Drive, correo, Telegram…). Si pasan 7 días sin copia externa, un aviso lo recuerda con un botón directo.</li>
+          <li><strong>Restaurar tras borrar el navegador</strong>: si la app arranca sin datos guardados, ofrece importar tu último .json. IMPORTAR JSON acepta también copias guardadas como <code>.json.txt</code>.</li>
+          <li><strong>Móvil sin atajos</strong>: en dispositivos táctiles se ocultan la sección "Atajos de teclado" del menú y las indicaciones de teclas, y los atajos se desactivan. En el ordenador siguen igual.</li>
+          <li><strong>Racha</strong>: un mes registrado con aportación total 0 (manual + saveback + round-up) corta la racha del producto, también si es el último mes; antes la racha seguía contando desde el mes anterior.</li>
+        </ul>
+      </div>
 
       <div class="cl-version">
         <div class="cl-ver-head">
@@ -659,9 +684,20 @@
   <div class="toast-icon">⚠</div>
   <div class="toast-body">
     <div class="toast-title">HACE TIEMPO QUE NO GUARDAS BACKUP</div>
-    <div class="toast-sub">Pulsa <kbd>S</kbd> o abre el menú para crear un punto de restauración</div>
+    <div class="toast-sub">Abre el menú para crear un punto de restauración<span class="kbd-hint"> o pulsa <kbd>S</kbd></span></div>
   </div>
   <button class="toast-close" id="snapToastClose">✕</button>
+</div>
+
+<!-- Toast copia externa: recordatorio de compartir o restaurar tras arrancar vacío -->
+<div class="toast" id="backupToast" style="display:none">
+  <div class="toast-icon">⇪</div>
+  <div class="toast-body">
+    <div class="toast-title" id="backupToastTitle"></div>
+    <div class="toast-sub" id="backupToastSub"></div>
+  </div>
+  <button class="toast-action" id="backupToastBtn"></button>
+  <button class="toast-close" id="backupToastClose">✕</button>
 </div>
 
 <script src="app.js"></script>

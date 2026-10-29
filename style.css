@@ -288,6 +288,10 @@ header {
 .snap-btn.danger:hover { background: rgba(248,113,113,0.1); color: var(--red); }
 
 /* Atajos de teclado */
+/* Móvil/tablet táctil: sin teclado físico, se ocultan los atajos (misma query que SIN_TECLADO en app.js) */
+@media (hover: none) and (pointer: coarse) {
+  .drawer-section-kbd, .kbd-hint { display: none; }
+}
 .kbd-list {
   display: flex; flex-direction: column; gap: 8px;
   padding: 4px;
@@ -877,6 +881,19 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
   flex-shrink: 0;
 }
 .toast-close:hover { color: var(--text); }
+.toast-action {
+  background: var(--gold); color: #111; border: none; border-radius: 8px;
+  font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  padding: 8px 12px; cursor: pointer; flex-shrink: 0;
+}
+
+/* ── Casilla del modal de entrada ───────────────────────────────────────── */
+.chk-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 22px; cursor: pointer;
+  font-family: monospace; font-size: 11px; color: var(--mute);
+}
+.chk-row input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; accent-color: var(--accent); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    RESPONSIVE · MÓVIL

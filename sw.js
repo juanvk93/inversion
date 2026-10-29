@@ -4,7 +4,7 @@
    - CDN externos (Chart.js, Google Fonts) se cachean bajo demanda, solo si la
      respuesta es correcta (ok, no opaca) */
 
-const CACHE = "cartera-v79";
+const CACHE = "cartera-v81";
 const ASSETS = [
   "./",
   "./index.html",

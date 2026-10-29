@@ -387,6 +387,7 @@ const state = {
   editProdId:     null,
   productoColor:  COLORES[0],
   lastSnapshot:   null,
+  lastExport:     null,   // ISO de la última copia que salió del navegador (descarga/compartir)
   logros:         {},      // { [logroId]: "YYYY-MM-DD" } — fecha de desbloqueo
   // Vistas avanzadas
   asignacionAporte: 0,           // simulador de aportación en Asignación
@@ -428,6 +429,8 @@ function migrarEntrada(e) {
   }
   return { ...e, manual: e.aportacion || 0, saveback: 0, roundup: 0, dividendo: e.dividendo || 0, nota: e.nota || "" };
 }
+
+let _arranqueVacio = false;   // IndexedDB vacío al arrancar (p. ej. tras borrar los datos del navegador)
 
 async function loadState() {
   try {
@@ -507,11 +510,13 @@ async function loadState() {
       } else {
         state.productos = PRODUCTOS_INIT;
         state.entradas  = ENTRADAS_INIT;
+        _arranqueVacio  = true;
       }
       saveState();   // fire-and-forget, persiste a IndexedDB
     }
 
     state.lastSnapshot = (await dbGet(DB_KV, "lastSnapshot")) || lsGet(STORE_K_SNAP) || null;
+    state.lastExport   = (await dbGet(DB_KV, "lastExport")) || null;
   } catch (err) {
     // Fallo leyendo la cartera principal: bloqueamos las escrituras para NO
     // sobrescribir con estado vacío los datos que sí siguen en IndexedDB.
@@ -1060,13 +1065,16 @@ function streakMeses(fechasDesc) {
   return streak;
 }
 
-// Calcula el streak de un producto (entradas con aportTotal > 0).
+// Calcula el streak de un producto (entradas con aportTotal > 0). Un mes
+// registrado con aportación 0 corta la racha, también si es el último: antes
+// se filtraba y la racha seguía contando desde el mes anterior.
 function calcStreakProducto(entradas) {
-  const fechas = [...(entradas || [])]
-    .filter(e => aportTotal(e) > 0)
-    .map(e => e.fecha)
-    .sort()
-    .reverse();
+  const desc = [...(entradas || [])].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const fechas = [];
+  for (const e of desc) {
+    if (aportTotal(e) <= 0) break;
+    fechas.push(e.fecha);
+  }
   return streakMeses(fechas);
 }
 
@@ -1652,8 +1660,65 @@ function descargarArchivo(nombre, contenido, mime) {
 function exportarJSON() {
   const fecha = hoyDia();
   descargarArchivo(`mi-cartera-${fecha}.json`, generarJSON(), "application/json;charset=utf-8");
+  marcarBackupExterno();
   flash();
   closeDrawer();
+}
+
+// ── Copia de seguridad externa ─────────────────────────────────────────────
+// Los snapshots viven en el mismo IndexedDB: si se borran los datos del
+// navegador desaparecen con todo lo demás. Estas copias salen del navegador
+// (descarga o menú Compartir del sistema) y son las que sobreviven al borrado.
+const LS_BACKUP_ENTRADA = "cartera_backup_al_guardar";   // último estado del check del modal de entrada
+
+// Con hora para que varias copias del mismo día no se pisen ni queden como "(1)"
+function nombreBackup() {
+  const d = new Date();
+  return `mi-cartera-${hoyDia()}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function marcarBackupExterno() {
+  const iso = new Date().toISOString();
+  state.lastExport = iso;
+  hideBackupToast();
+  // Marca de tiempo en claro (como lastSnapshot): no pisa ningún blob cifrado
+  dbPut(DB_KV, iso, "lastExport").catch(() => { /* no crítico */ });
+}
+
+function diasSinBackup() {
+  if (!state.lastExport) return Infinity;
+  return (Date.now() - new Date(state.lastExport).getTime()) / 86400000;
+}
+
+function descargarBackup() {
+  descargarArchivo(`${nombreBackup()}.json`, generarJSON(), "application/json;charset=utf-8");
+  marcarBackupExterno();
+}
+
+// Abre el menú Compartir de Android/iOS con el JSON adjunto (Drive, correo,
+// Telegram…). Si el navegador no puede compartir archivos, se descarga.
+async function compartirBackup() {
+  if (bloqueado()) return;   // bloqueado el estado en memoria está vacío: no compartir una copia vacía
+  closeDrawer();
+  const json = generarJSON();
+  const base = nombreBackup();
+  // Chrome Android solo comparte una lista cerrada de tipos: si rechaza .json,
+  // se envía como texto plano (IMPORTAR JSON acepta ambos).
+  const file = [
+    new File([json], `${base}.json`,     { type: "application/json" }),
+    new File([json], `${base}.json.txt`, { type: "text/plain" }),
+  ].find(f => navigator.canShare?.({ files: [f] }));
+  if (!file) { descargarBackup(); flash(); return; }
+  try {
+    await navigator.share({ files: [file], title: "Copia de seguridad · MI CARTERA" });
+    marcarBackupExterno();
+    flash();
+  } catch (err) {
+    if (err?.name === "AbortError") return;   // el usuario cerró el menú
+    console.warn("[Cartera] Compartir falló; se descarga la copia", err);
+    descargarBackup();
+    flash();
+  }
 }
 
 function importarJSON(texto) {
@@ -2043,8 +2108,31 @@ function hideSnapToast() { $("#snapToast").style.display = "none"; }
 function checkSnapReminder() {
   // Solo tiene sentido recordar el backup si hay algo que respaldar
   const hayDatos = state.productos.some(p => (state.entradas[p.id] || []).length);
-  if (hayDatos && diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast();
+  if (!hayDatos) return;
+  // La copia externa tiene prioridad: es la única que sobrevive a borrar el navegador
+  if (diasSinBackup() >= SNAP_REMINDER_DAYS) showBackupToast("copia");
+  else if (diasSinSnapshot() >= SNAP_REMINDER_DAYS) showSnapToast();
 }
+
+// Toast de copia externa: "copia" recuerda compartir el backup; "restaurar"
+// aparece al arrancar con la base vacía para importar el último JSON.
+function showBackupToast(modo) {
+  const restaurar = modo === "restaurar";
+  const d = diasSinBackup();
+  $("#backupToastTitle").textContent = restaurar ? "¿TIENES UNA COPIA DE SEGURIDAD?" : "HAZ UNA COPIA FUERA DEL NAVEGADOR";
+  $("#backupToastSub").textContent = restaurar
+    ? "No hay datos guardados en este navegador. Restaura tu último .json"
+    : (d === Infinity ? "Aún no has guardado ninguna copia externa" : `Última copia externa hace ${Math.floor(d)} días`);
+  $("#backupToastBtn").textContent = restaurar ? "RESTAURAR" : "COMPARTIR";
+  $("#backupToastBtn").onclick = () => {
+    hideBackupToast();
+    if (restaurar) $("#fileImportJSON").click();
+    else compartirBackup();
+  };
+  hideSnapToast();
+  $("#backupToast").style.display = "flex";
+}
+function hideBackupToast() { $("#backupToast").style.display = "none"; }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 5c. PRECIOS · CoinGecko (cripto) + Twelve Data/Yahoo (ETFs) + precio manual
@@ -4715,7 +4803,7 @@ function renderDiffSync(snaps, ilegibles = 0) {
           ? `<div class="empty-title">SNAPSHOTS NO LEGIBLES</div>
         <div class="empty-sub">${ilegibles} snapshot(s) ${_locked ? "cifrados: desbloquea los datos para compararlos" : "cifrados con otra passphrase"}</div>`
           : `<div class="empty-title">SIN SNAPSHOTS GUARDADOS</div>
-        <div class="empty-sub">Crea al menos uno desde el menú lateral · <kbd>S</kbd></div>`}
+        <div class="empty-sub">Crea al menos uno desde el menú lateral<span class="kbd-hint"> · <kbd>S</kbd></span></div>`}
       </div></div>
     `;
     return;
@@ -5332,6 +5420,7 @@ function openEntryModal(entry = null) {
   $("#meValor").value           = entry?.valor    ?? "";
   $("#meDividendo").value       = entry?.dividendo ?? "";
   $("#meNota").value            = entry?.nota     ?? "";
+  $("#meBackup").checked        = lsGet(LS_BACKUP_ENTRADA) !== "0";   // activado por defecto
   recalcMETotal();
   $("#meSave").style.background = accent;
   // $() solo acepta un selector: el 2º argumento se ignoraba y cogía el primer .modal del documento
@@ -5388,6 +5477,9 @@ function saveEntry() {
   }
   state.entradas[pid] = [...base, e].sort((a,b) => a.fecha.localeCompare(b.fecha));
   saveState();
+  const backup = $("#meBackup").checked;
+  lsSet(LS_BACKUP_ENTRADA, backup ? "1" : "0");
+  if (backup) descargarBackup();   // dentro del clic: Chrome no la trata como descarga automática
   $("#modalEntrada").classList.remove("open");
   state.editEntradaId = null;
   render();
@@ -5924,6 +6016,10 @@ function toggleDrawer() {
 // 10. SHORTCUTS · atajos de teclado
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Móvil/tablet táctil (sin teclado físico): los atajos no aplican y se ocultan sus
+// indicaciones vía la misma media query en style.css (.drawer-section-kbd, .kbd-hint).
+const SIN_TECLADO = window.matchMedia?.("(hover: none) and (pointer: coarse)").matches ?? false;
+
 function isTypingTarget(el) {
   if (!el) return false;
   const tag = el.tagName;
@@ -6097,6 +6193,7 @@ function bindGlobals() {
     e.target.value = "";
   };
   $("#btnExportJSON").onclick    = exportarJSON;
+  $("#btnShareJSON").onclick     = compartirBackup;
   $("#btnImportJSON").onclick    = () => $("#fileImportJSON").click();
   $("#fileImportJSON").onchange  = (e) => {
     const f = e.target.files?.[0];
@@ -6119,6 +6216,7 @@ function bindGlobals() {
 
   // Toast
   $("#snapToastClose").onclick   = hideSnapToast;
+  $("#backupToastClose").onclick = hideBackupToast;
 
   // Modales
   $("#meSave").onclick   = saveEntry;
@@ -6194,8 +6292,8 @@ function bindGlobals() {
   // Configuración (página · tema, proveedor, seguridad, snapshots)
   $("#btnConfig").onclick = () => { state.tab = "config"; closeDrawer(); render(); };
 
-  // Atajos
-  document.addEventListener("keydown", handleShortcut);
+  // Atajos (solo con teclado físico)
+  if (!SIN_TECLADO) document.addEventListener("keydown", handleShortcut);
 }
 
 function openCalcModal(prodId) {
@@ -6697,7 +6795,10 @@ async function descargarWrappedPNG(year) {
       <p class="seg-info">No se pudo mostrar esta vista: ${esc(err?.message || err)}. Prueba otra pestaña desde el menú o restaura un punto de guardado.</p></div>`;
   }
   if (_locked) showSaveError(LOCKED_MSG);
-  try { checkSnapReminder(); } catch { /* no crítico */ }   // el toast de recordatorio sigue activo
+  try {
+    if (_arranqueVacio && !_locked) showBackupToast("restaurar");
+    else checkSnapReminder();
+  } catch { /* no crítico */ }   // el toast de recordatorio sigue activo
 
   // Solicitar almacenamiento persistente: evita que el navegador borre
   // IndexedDB por falta de espacio o inactividad (fire-and-forget).

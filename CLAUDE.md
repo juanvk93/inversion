@@ -49,7 +49,7 @@ Cuatro archivos principales:
 | RENDER | `renderTabActual`, `renderResumen`, `renderProyeccion`, `renderFIRE`, `renderAsignacion`, `renderDiff`, `renderFiscal`, `renderConfig`, `renderObjetivos`, `renderHeatmap` |
 | MODALS | Entrada, producto, objetivos, calculadora, changelog; bloque de seguridad/cifrado |
 | DRAWER | Panel lateral: productos, vistas, configuración, datos (CSV/JSON/PDF), changelog |
-| SHORTCUTS | N, E, I, S, M, P, F, A, C, T, 1-9, Esc |
+| SHORTCUTS | N, E, I, S, M, P, F, A, C, T, 1-9, Esc. Desactivados en táctil (`SIN_TECLADO`); sus indicaciones (`.drawer-section-kbd`, `.kbd-hint`) se ocultan con la misma media query |
 | BINDINGS & INIT | `bindGlobals()`, `bindCommon()`, init async |
 
 ## Modelo de datos (IndexedDB — store `kv`)
@@ -63,7 +63,13 @@ state.lastSnapshot  // ISO timestamp del último snapshot
 ```
 
 Claves adicionales en el store `kv`: `firePrefs` (`{gasto, regla}`), `twelveDataApiKey`, `etfProvider`
-(`"twelvedata"` | `"yahoo"`) y `encMeta` (`{enabled, salt, check}`) cuando el cifrado está activo.
+(`"twelvedata"` | `"yahoo"`), `lastExport` (ISO de la última copia JSON descargada/compartida fuera del
+navegador) y `encMeta` (`{enabled, salt, check}`) cuando el cifrado está activo.
+
+**Copias externas**: los snapshots viven en IndexedDB y se pierden si se borran los datos del navegador.
+Por eso el modal de entrada ofrece descargar el JSON al guardar (`#meBackup`, preferencia en localStorage
+`cartera_backup_al_guardar`), el drawer tiene COMPARTIR COPIA (`compartirBackup()`, Web Share API con
+fallback a descarga) y `#backupToast` recuerda la copia tras 7 días o propone restaurar al arrancar vacío.
 
 `fecha` usa formato `YYYY-MM` y es **única por producto** (al reañadir un mes se ofrece reemplazar).
 Tres tipos de aportación: **manual**, **saveback** y **roundup**.

@@ -334,13 +334,14 @@ main { padding: 24px 32px; padding-bottom: calc(var(--nav-h) + 40px + env(safe-a
   bottom: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
-  background: #1C1C1F;
+  /* Colores del tema (antes fondo oscuro fijo: en claro, texto oscuro sobre oscuro) */
+  background: var(--sheet);
   border: 1px solid var(--panel-b);
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 13px; line-height: 1.5;
   color: var(--text);
-  font-family: inherit;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;   /* no la serif de la (i) */
   font-style: normal; font-weight: 400; letter-spacing: 0;
   width: 260px;
   white-space: pre-line;
@@ -351,7 +352,8 @@ main { padding: 24px 32px; padding-bottom: calc(var(--nav-h) + 40px + env(safe-a
   transition: opacity .2s;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
 }
-.kpi-info:hover::after, .kpi-info:focus-visible::after { opacity: 1; }
+/* :focus además de :hover: en el móvil un toque enfoca la (i) y abre su ayuda */
+.kpi-info:hover::after, .kpi-info:focus::after { opacity: 1; }
 /* El último KPI puede quedarse pegado al borde derecho: reposicionar el tooltip */
 .kpi:last-child .kpi-info::after {
   left: auto;
@@ -1034,6 +1036,7 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 :root.light .modal { box-shadow: 0 12px 40px rgba(0,0,0,0.18); }
 /* Botón principal de producto: el acento se oscurece en claro (render.js), texto blanco */
 :root.light .btn-accion { color: #fff; }
+:root.light .kpi-info::after { border-color: var(--field-b); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
 /* Iniciales de producto: el color del producto no se lee sobre su tono claro */
 :root.light .avatar { color: var(--text) !important; }
 :root.light .drawer { box-shadow: -4px 0 24px rgba(0,0,0,0.06); }

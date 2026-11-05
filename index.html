@@ -7,9 +7,10 @@
      solo admite las tres librerías concretas de jsDelivr (no todo el CDN, que
      permitiría cargar cualquier paquete npm). connect-src enumera exactamente las
      APIs de precios y los proxies CORS en uso (Yahoo se consulta solo vía proxy). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4.4.1/ https://cdn.jsdelivr.net/npm/jspdf@2.5.2/ https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://api.coingecko.com https://api.twelvedata.com https://api.allorigins.win https://api.codetabs.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'">
-<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080C12">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4.4.1/ https://cdn.jsdelivr.net/npm/jspdf@2.5.2/ https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://api.frankfurter.app https://api.frankfurter.dev https://api.coingecko.com https://api.twelvedata.com https://api.allorigins.win https://api.codetabs.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'">
+<!-- interactive-widget: el teclado de Android redimensiona el layout (sin él tapaba el botón GUARDAR) -->
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#000000">
 <meta name="description" content="Seguimiento personal de cartera de inversiones">
 <!-- PWA / iOS Safari -->
 <meta name="mobile-web-app-capable" content="yes">
@@ -23,9 +24,10 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Lato:wght@300;400;700&display=swap" rel="stylesheet" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" crossorigin="anonymous">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
+<!-- defer: no bloquea el primer pintado; se ejecuta antes que js/main.js (los módulos van detrás en orden) -->
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -33,171 +35,100 @@
 
 <div class="wrap">
   <header>
-    <button class="btn-hamburger" id="btnDrawer" title="Menú (M)" aria-label="Abrir menú">
-      <span></span><span></span><span></span>
-    </button>
-    <div class="brand"><h1>MI CARTERA</h1></div>
-    <nav class="tabs" id="tabs"></nav>
+    <div class="brand"><h1>Mi Cartera</h1></div>
+    <nav class="tabs" id="tabs" aria-label="Productos"></nav>
     <div class="actions">
-      <span class="saved" id="saved" style="display:none">✓ guardado</span>
-      <span class="save-error" id="saveError" style="display:none" title="">⚠ error al guardar</span>
-      <button class="btn-primary" id="btnAddEntry" style="display:none">+ ENTRADA</button>
+      <span class="saved" id="saved" style="display:none">✓ Guardado</span>
+      <span class="save-error" id="saveError" style="display:none" title="">⚠ Error al guardar</span>
     </div>
   </header>
 
   <main id="main"></main>
 </div>
 
-<!-- FAB: botón flotante de nueva entrada (solo móvil, en tabs de producto) -->
-<button class="fab-entry" id="fabAddEntry" aria-label="Nueva entrada" title="Nueva entrada">
-  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-</button>
+<!-- Barra inferior: Cartera · Cierre · + · Análisis · Más (js/views/render.js marca la activa) -->
+<nav class="bottom-nav" id="bottomNav" aria-label="Navegación principal">
+  <button class="bn-item" id="navCartera" data-nav="cartera"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Cartera</span></button>
+  <button class="bn-item" id="btnCierre" data-nav="cierre"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Cierre</span></button>
+  <button class="bn-add" id="fabAddEntry" aria-label="Nueva entrada" title="Nueva entrada"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button class="bn-item" id="navAnalisis" data-nav="analisis"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg><span>Análisis</span></button>
+  <button class="bn-item" id="btnDrawer" data-nav="mas" aria-label="Más opciones" title="Más (M)"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>Más</span></button>
+</nav>
 
 <!-- Drawer lateral -->
 <div class="drawer-overlay" id="drawerOverlay"></div>
 <aside class="drawer" id="drawer">
   <div class="drawer-head">
-    <h3>OPCIONES</h3>
+    <h3>Más</h3>
     <button class="modal-close" id="btnDrawerClose">✕</button>
   </div>
 
   <div class="drawer-section">
-    <div class="drawer-section-title">PRODUCTOS</div>
+    <div class="drawer-section-title">General</div>
     <button class="drawer-item" id="btnNewProdDrawer">
       <span class="di-icon">+</span>
       <div class="di-body">
-        <div class="di-title">NUEVO PRODUCTO</div>
+        <div class="di-title">Nuevo producto</div>
         <div class="di-sub">Añadir a la cartera</div>
       </div>
     </button>
-  </div>
-
-  <div class="drawer-section">
-    <div class="drawer-section-title">VISTAS</div>
-    <button class="drawer-item" id="btnResumen">
-      <span class="di-icon">≡</span>
-      <div class="di-body">
-        <div class="di-title">RESUMEN DE PRODUCTOS</div>
-        <div class="di-sub">Vista comparada de todos los productos</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnProyeccion">
-      <span class="di-icon">↗</span>
-      <div class="di-body">
-        <div class="di-title">PROYECCIÓN</div>
-        <div class="di-sub">Simulación de evolución futura</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnObjetivos">
-      <span class="di-icon">◎</span>
-      <div class="di-body">
-        <div class="di-title">OBJETIVOS</div>
-        <div class="di-sub">Gestionar metas de inversión</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnFire">
-      <span class="di-icon">△</span>
-      <div class="di-body">
-        <div class="di-title">PLAN FIRE</div>
-        <div class="di-sub">Independencia financiera</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnAsignacion">
-      <span class="di-icon">⎄</span>
-      <div class="di-body">
-        <div class="di-title">ASIGNACIÓN</div>
-        <div class="di-sub">Drift y sugerencia de aportación</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnDiff">
-      <span class="di-icon">⇔</span>
-      <div class="di-body">
-        <div class="di-title">COMPARAR SNAPSHOTS</div>
-        <div class="di-sub">Evolución entre dos puntos guardados</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnFiscal">
-      <span class="di-icon">€</span>
-      <div class="di-body">
-        <div class="di-title">FISCALIDAD</div>
-        <div class="di-sub">Simulador D-100 (plusvalías)</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnBenchmark">
-      <span class="di-icon">⚖</span>
-      <div class="di-body">
-        <div class="di-title">VS. BENCHMARK</div>
-        <div class="di-sub">¿Bates al índice (S&P 500, MSCI World…)?</div>
-      </div>
-    </button>
-    <button class="drawer-item" id="btnLogros">
-      <span class="di-icon">🏅</span>
-      <div class="di-body">
-        <div class="di-title">LOGROS</div>
-        <div class="di-sub">Hitos e insignias de tu progreso</div>
-      </div>
-    </button>
-  </div>
-
-  <div class="drawer-section">
-    <div class="drawer-section-title">CONFIGURACIÓN</div>
     <button class="drawer-item" id="btnConfig">
       <span class="di-icon">⚙</span>
       <div class="di-body">
-        <div class="di-title">CONFIGURACIÓN</div>
-        <div class="di-sub">API keys y preferencias</div>
+        <div class="di-title">Configuración</div>
+        <div class="di-sub">Tema, precios, seguridad y puntos de restauración</div>
       </div>
     </button>
   </div>
 
   <div class="drawer-section">
-    <div class="drawer-section-title">DATOS</div>
+    <div class="drawer-section-title">Datos</div>
     <button class="drawer-item" id="btnExport">
       <span class="di-icon">↑</span>
       <div class="di-body">
-        <div class="di-title">EXPORTAR CSV</div>
+        <div class="di-title">Exportar CSV</div>
         <div class="di-sub">Descargar todos los datos</div>
       </div>
     </button>
     <button class="drawer-item" id="btnImport">
       <span class="di-icon">↓</span>
       <div class="di-body">
-        <div class="di-title">IMPORTAR CSV</div>
+        <div class="di-title">Importar CSV</div>
         <div class="di-sub">Reemplazar o fusionar datos</div>
       </div>
     </button>
     <button class="drawer-item" id="btnExportJSON">
       <span class="di-icon">↑</span>
       <div class="di-body">
-        <div class="di-title">EXPORTAR JSON</div>
+        <div class="di-title">Exportar JSON</div>
         <div class="di-sub">Backup completo (productos, entradas, objetivos)</div>
       </div>
     </button>
     <button class="drawer-item" id="btnShareJSON">
       <span class="di-icon">⇪</span>
       <div class="di-body">
-        <div class="di-title">COMPARTIR COPIA</div>
+        <div class="di-title">Compartir copia</div>
         <div class="di-sub">Enviar el backup a Drive, correo… (fuera del navegador)</div>
       </div>
     </button>
     <button class="drawer-item" id="btnImportJSON">
       <span class="di-icon">↓</span>
       <div class="di-body">
-        <div class="di-title">IMPORTAR JSON</div>
+        <div class="di-title">Importar JSON</div>
         <div class="di-sub">Restaurar backup completo</div>
       </div>
     </button>
     <button class="drawer-item" id="btnPDF">
       <span class="di-icon">⎙</span>
       <div class="di-body">
-        <div class="di-title">EXPORTAR PDF</div>
+        <div class="di-title">Exportar PDF</div>
         <div class="di-sub">Informe completo de la vista actual</div>
       </div>
     </button>
     <button class="drawer-item" id="btnWrapped">
       <span class="di-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg></span>
       <div class="di-body">
-        <div class="di-title">INFORME ANUAL</div>
+        <div class="di-title">Informe anual</div>
         <div class="di-sub">Tu año inversor en una tarjeta exportable</div>
       </div>
     </button>
@@ -206,7 +137,7 @@
   </div>
 
   <div class="drawer-section drawer-section-kbd">
-    <div class="drawer-section-title">ATAJOS DE TECLADO</div>
+    <div class="drawer-section-title">Atajos de teclado</div>
     <div class="kbd-list">
       <div><kbd>N</kbd><span>Nueva entrada</span></div>
       <div><kbd>E</kbd><span>Exportar CSV</span></div>
@@ -225,34 +156,120 @@
   </div>
 
   <div class="drawer-section">
-    <div class="drawer-section-title">INFO</div>
+    <div class="drawer-section-title">Información</div>
     <button class="drawer-item" id="btnChangelog">
       <span class="di-icon">≡</span>
       <div class="di-body">
-        <div class="di-title">CHANGELOG</div>
+        <div class="di-title">Novedades</div>
         <div class="di-sub">Historial de versiones y almacenamiento</div>
       </div>
     </button>
   </div>
 </aside>
 
+<!-- Hoja "Análisis" (barra inferior): vistas internas. Los botones conservan sus ids (bindings.js) -->
+<div class="modal-bg sheet-bg" id="modalAnalisis" role="dialog" aria-modal="true" aria-labelledby="anTitle">
+  <div class="modal sheet">
+    <div class="modal-head">
+      <h2 id="anTitle">Análisis</h2>
+      <button class="modal-close" data-close="modalAnalisis" aria-label="Cerrar">✕</button>
+    </div>
+    <div class="sheet-list">
+    <button class="drawer-item" id="btnResumen">
+      <span class="di-icon">≡</span>
+      <div class="di-body">
+        <div class="di-title">Resumen de productos</div>
+        <div class="di-sub">Vista comparada de todos los productos</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnProyeccion">
+      <span class="di-icon">↗</span>
+      <div class="di-body">
+        <div class="di-title">Proyección</div>
+        <div class="di-sub">Simulación de evolución futura</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnObjetivos">
+      <span class="di-icon">◎</span>
+      <div class="di-body">
+        <div class="di-title">Objetivos</div>
+        <div class="di-sub">Gestionar metas de inversión</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnFire">
+      <span class="di-icon">△</span>
+      <div class="di-body">
+        <div class="di-title">Plan FIRE</div>
+        <div class="di-sub">Independencia financiera</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnAsignacion">
+      <span class="di-icon">⎄</span>
+      <div class="di-body">
+        <div class="di-title">Asignación</div>
+        <div class="di-sub">Drift y sugerencia de aportación</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnDiff">
+      <span class="di-icon">⇔</span>
+      <div class="di-body">
+        <div class="di-title">Comparar snapshots</div>
+        <div class="di-sub">Evolución entre dos puntos guardados</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnFiscal">
+      <span class="di-icon">€</span>
+      <div class="di-body">
+        <div class="di-title">Fiscalidad</div>
+        <div class="di-sub">Simulador D-100 (plusvalías)</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnBenchmark">
+      <span class="di-icon">⚖</span>
+      <div class="di-body">
+        <div class="di-title">Vs. índice de referencia</div>
+        <div class="di-sub">¿Bates al índice (S&P 500, MSCI World…)?</div>
+      </div>
+    </button>
+    <button class="drawer-item" id="btnLogros">
+      <span class="di-icon">🏅</span>
+      <div class="di-body">
+        <div class="di-title">Logros</div>
+        <div class="di-sub">Hitos e insignias de tu progreso</div>
+      </div>
+    </button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal passphrase (sustituye a prompt(): el campo es de tipo password) -->
-<div class="modal-bg" id="modalPass" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+<div class="modal-bg" id="modalPass" role="dialog" aria-modal="true" aria-labelledby="ppTitle" data-propio>
   <div class="modal modal-small">
     <div class="modal-head">
-      <h2 id="ppTitle">PASSPHRASE</h2>
+      <h2 id="ppTitle">Contraseña de cifrado</h2>
     </div>
     <div class="modal-sub" id="ppMsg" style="margin-bottom:14px;white-space:pre-line"></div>
     <form id="ppForm" autocomplete="off">
       <div class="field">
-        <label for="ppInput">PASSPHRASE</label>
+        <label for="ppInput">Contraseña de cifrado</label>
         <input type="password" id="ppInput" autocomplete="current-password">
       </div>
       <div class="pp-actions">
-        <button type="button" class="btn-ghost" id="ppCancel">CANCELAR</button>
-        <button type="submit" class="save-btn" id="ppOk">ACEPTAR</button>
+        <button type="button" class="btn-ghost" id="ppCancel">Cancelar</button>
+        <button type="submit" class="save-btn" id="ppOk">Aceptar</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Modal de elección (js/dialog.js · elegir()): varias acciones con nombre -->
+<div class="modal-bg" id="modalElegir" role="dialog" aria-modal="true" aria-labelledby="elTitle" data-propio>
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2 id="elTitle"></h2>
+    </div>
+    <div class="modal-sub" id="elMsg" style="margin-bottom:16px;white-space:pre-line"></div>
+    <div class="el-actions" id="elActions"></div>
   </div>
 </div>
 
@@ -261,52 +278,57 @@
   <div class="modal">
     <div class="modal-head">
       <div>
-        <h2 id="meTitle">NUEVA ENTRADA</h2>
+        <h2 id="meTitle">Nueva entrada</h2>
         <div class="modal-sub" id="meSub"></div>
       </div>
       <button class="modal-close" data-close="modalEntrada">✕</button>
     </div>
     <div class="field">
-      <label for="meFecha">MES</label>
+      <label for="meFecha">Mes</label>
       <!-- placeholder/pattern: Safari macOS y Firefox escritorio muestran type=month como texto -->
       <input type="month" id="meFecha" placeholder="AAAA-MM" pattern="\d{4}-(0[1-9]|1[0-2])">
     </div>
     <div class="field">
-      <label style="margin-bottom:8px">APORTACIÓN DESGLOSADA (€)</label>
+      <label style="margin-bottom:8px">Aportación desglosada (<span class="me-div">€</span>) <span class="lbl-hint">(venta o retirada: Manual en negativo)</span></label>
       <div class="triple">
         <div>
           <input type="text" inputmode="decimal" placeholder="Manual"   id="meManual">
-          <div class="sublabel">MANUAL</div>
+          <div class="sublabel">Manual</div>
         </div>
         <div>
           <input type="text" inputmode="decimal" placeholder="Saveback" id="meSaveback">
-          <div class="sublabel">SAVEBACK</div>
+          <div class="sublabel">Saveback</div>
         </div>
         <div>
           <input type="text" inputmode="decimal" placeholder="Round-up" id="meRoundup">
-          <div class="sublabel">ROUND-UP</div>
+          <div class="sublabel">Round-up</div>
         </div>
       </div>
       <div class="total-line" id="meTotal">Total: €0,00</div>
+      <div class="me-hint" id="mePrefill"></div>
     </div>
     <div class="field">
-      <label for="meValor">VALOR REAL ACTUAL (€)</label>
+      <label for="meValor">Valor real actual (<span class="me-div">€</span>)</label>
       <!-- type=text + inputmode: admite coma decimal ("4450,50") en todos los navegadores -->
-      <input type="text" inputmode="decimal" placeholder="4450" id="meValor">
+      <div class="input-con-btn">
+        <input type="text" inputmode="decimal" placeholder="4450" id="meValor">
+        <!-- Visible solo si el producto tiene unidades y precio (js/modals/entrada.js) -->
+        <button type="button" class="btn-calc-valor" id="meCalcValor" hidden></button>
+      </div>
     </div>
     <div class="field">
-      <label>RENTA COBRADA <span class="lbl-hint">(dividendo o cupón, este mes, opcional)</span></label>
+      <label>Renta cobrada (<span class="me-div">€</span>) <span class="lbl-hint">(dividendo o cupón, este mes, opcional)</span></label>
       <input type="text" inputmode="decimal" placeholder="0" id="meDividendo">
     </div>
     <div class="field" style="margin-bottom:16px">
-      <label>NOTA DEL MES (opcional)</label>
+      <label>Nota del mes (opcional)</label>
       <textarea rows="2" id="meNota" placeholder="Ej: corrección de mercado, aporte extra por bonus..."></textarea>
     </div>
     <label class="chk-row" for="meBackup">
       <input type="checkbox" id="meBackup">
       <span>Descargar copia de seguridad (.json) al guardar</span>
     </label>
-    <button class="save-btn" id="meSave">GUARDAR</button>
+    <button class="save-btn" id="meSave">Guardar</button>
   </div>
 </div>
 
@@ -315,24 +337,24 @@
 <div class="modal-bg" id="modalCalc">
   <div class="modal modal-small">
     <div class="modal-head">
-      <h2 id="mcTitle">CALCULADORA</h2>
+      <h2 id="mcTitle">Calculadora</h2>
       <button class="modal-close" data-close="modalCalc">✕</button>
     </div>
     <div class="modal-sub" id="mcSub" style="margin-bottom:14px"></div>
     <div class="calc-grid">
       <div class="calc-cell">
         <input type="number" step="any" min="0" id="mcUnidades" placeholder="0">
-        <div class="sublabel">UNIDADES</div>
+        <div class="sublabel">Unidades</div>
       </div>
       <div class="calc-cell calc-op">×</div>
       <div class="calc-cell">
         <input type="number" step="any" min="0" id="mcPrecio" placeholder="0,00">
-        <div class="sublabel">PRECIO €/u</div>
+        <div class="sublabel">Precio €/u</div>
       </div>
       <div class="calc-cell calc-op">=</div>
       <div class="calc-cell">
         <div class="calc-result" id="mcResult">—</div>
-        <div class="sublabel">VALOR</div>
+        <div class="sublabel">Valor</div>
       </div>
     </div>
     <div class="field-hint" id="mcSource" style="text-align:center;margin-top:10px"></div>
@@ -343,7 +365,7 @@
 <div class="modal-bg" id="modalChangelog">
   <div class="modal modal-wide">
     <div class="modal-head">
-      <h2>CHANGELOG</h2>
+      <h2>Novedades</h2>
       <button class="modal-close" data-close="modalChangelog">✕</button>
     </div>
 
@@ -357,6 +379,62 @@
 
       <div class="cl-version">
         <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.15</span>
+          <span class="cl-ver-date">Noviembre 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Varias ventanas</strong>: si la app está abierta en la PWA y en el navegador a la vez, ninguna pisa los cambios de la otra. La que se queda atrás se recarga sola (o avisa si estás escribiendo) y nunca guarda encima.</li>
+          <li><strong>Divisas</strong>: un producto en USD, GBP… se registra en su moneda y el Total, la fiscalidad y los resúmenes lo pasan a euros con el tipo de cambio del BCE de cada mes.</li>
+          <li><strong>Pendiente</strong>: el Total avisa de los meses sin registrar (el anterior si te lo saltaste y, desde el día 25, el actual) y un punto en «Cierre» lo recuerda.</li>
+          <li><strong>Accesos directos</strong>: mantén pulsado el icono de la app para ir a «Nueva entrada» o «Cierre de mes». La barra de estado sigue el tema.</li>
+          <li><strong>Más rápida y robusta</strong>: el Monte Carlo no se recalcula si nada cambia, la API key de Twelve Data viaja en una cabecera y se descartan precios absurdos que lleguen por los proxies.</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.14</span>
+          <span class="cl-ver-date">Noviembre 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Nuevo diseño</strong>: fondo negro, tipografía Inter, textos en minúsculas y menos cajas. El color de cada producto se mantiene en su pestaña, su gráfico y sus botones.</li>
+          <li><strong>Barra inferior</strong>: Cartera, Cierre, + (nueva entrada; desde el Total pregunta el producto), Análisis (todas las vistas) y Más (datos, configuración, novedades).</li>
+          <li><strong>Total y productos</strong>: valor grande arriba con la ganancia y el mes, gráfico con el periodo debajo, lista de posiciones, indicadores en filas con su (i), historial compacto por meses y riesgo, fiscalidad y costes plegables.</li>
+          <li><strong>Modales como hojas</strong> que suben desde abajo, campos y botones más grandes, y el Cierre de mes con tarjetas más limpias.</li>
+          <li><strong>TIR de cada producto</strong>: si un producto empezó a registrarse con dinero ya invertido, esa posición cuenta como capital y no como rentabilidad (igual que ya hacía el Total). Su TIR, ganancia, coste fiscal y la comparación de snapshots ahora cuadran con el Total.</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.13</span>
+          <span class="cl-ver-date">Noviembre 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Dividendos en la TIR</strong>: la TIR y la rentabilidad mensual cuentan las rentas cobradas. El mes del dividendo ya no aparece como pérdida (mejoran volatilidad, Sharpe y Monte Carlo).</li>
+          <li><strong>Ventas parciales</strong>: una venta (MANUAL en negativo) resta del coste solo su parte proporcional. Fiscalidad muestra la plusvalía ya realizada este año y la suma a la base del simulador.</li>
+          <li><strong>Benchmark más justo</strong>: las retiradas y rentas venden participaciones del índice, y si la serie del índice empieza después que tu historial, la comparación arranca en ese mes.</li>
+          <li><strong>Proyecciones con poco historial</strong>: el escenario realista, FIRE y Monte Carlo exigen 12 meses de historial y acotan la rentabilidad entre −10% y 15% anual.</li>
+          <li><strong>Limpieza</strong>: se borra la copia antigua de los datos en localStorage, que seguía en claro aunque activaras el cifrado.</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
+          <span class="cl-ver-tag">v1.12</span>
+          <span class="cl-ver-date">Noviembre 2026</span>
+        </div>
+        <ul class="cl-items">
+          <li><strong>Cierre de mes</strong>: nueva vista del menú para registrar el mes de todos los productos en una sola pantalla, con un único GUARDAR, una sola copia .json y opción de DESHACER.</li>
+          <li><strong>Entrada más rápida</strong>: una entrada nueva propone las aportaciones del último mes y, si el producto tiene unidades y precio, un botón rellena el VALOR con unidades × precio.</li>
+          <li><strong>Sin ventanas del navegador</strong>: avisos y confirmaciones con el estilo de la app y botones con nombre ("ELIMINAR", "REEMPLAZAR"). Los errores del formulario aparecen junto al campo. Borrar una entrada u objetivo ya no pide confirmación: se puede DESHACER durante unos segundos.</li>
+          <li><strong>Más fácil de pulsar y de leer</strong>: botones táctiles de al menos 44 px (✕ de los modales, Editar/Borrar, la "i" de los KPI), letra pequeña algo mayor y grises con más contraste. Los avisos ya no quedan tapados por el botón +.</li>
+          <li><strong>Aviso de nueva versión</strong>: cuando hay una actualización aparece "Nueva versión · RECARGAR"; antes se aplicaba sola en el segundo arranque y podía mezclar archivos de dos versiones.</li>
+        </ul>
+      </div>
+
+      <div class="cl-version">
+        <div class="cl-ver-head">
           <span class="cl-ver-tag">v1.11</span>
           <span class="cl-ver-date">Octubre 2026</span>
         </div>
@@ -364,6 +442,13 @@
           <li><strong>Copia de seguridad al guardar</strong>: el modal de entrada incluye la casilla "Descargar copia de seguridad (.json) al guardar" (activada por defecto; recuerda tu última elección).</li>
           <li><strong>Compartir copia</strong>: nueva opción del menú que abre el menú Compartir del móvil con el backup adjunto (Drive, correo, Telegram…). Si pasan 7 días sin copia externa, un aviso lo recuerda con un botón directo.</li>
           <li><strong>Restaurar tras borrar el navegador</strong>: si la app arranca sin datos guardados, ofrece importar tu último .json. IMPORTAR JSON acepta también copias guardadas como <code>.json.txt</code>.</li>
+          <li><strong>TIR y ganancia del Total</strong>: la posición que ya tenía un producto al empezar a registrarlo cuenta como capital aportado, no como rentabilidad (antes podía disparar la TIR del Total, la proyección "Realista", el FIRE y la comparación con el índice). El desglose de "Aportado" la muestra aparte.</li>
+          <li><strong>Importar sin sustos</strong>: en lugar de "Aceptar = reemplazar / Cancelar = fusionar", un diálogo con tres botones (Reemplazar, Fusionar, Cancelar). Antes de importar, restaurar un punto o eliminar un producto se crea un punto de restauración automático.</li>
+          <li><strong>Botón atrás de Android</strong>: cierra el modal o el menú abierto en lugar de salir de la app.</li>
+          <li><strong>Teclado del móvil</strong>: ya no tapa el botón GUARDAR de los modales.</li>
+          <li><strong>Copias vacías</strong>: con los datos bloqueados ya no se puede exportar (se descargaba una cartera vacía), y una copia sin productos no silencia el recordatorio.</li>
+          <li><strong>Más fluida</strong>: gráficos sin animación al redibujar, formateo de números reutilizado y Chart.js sin bloquear el arranque.</li>
+          <li><strong>Código modular</strong>: la lógica pasa de un único <code>app.js</code> a módulos ES en <code>js/</code> (estado, cálculos, vistas, modales…). Sin cambios de comportamiento.</li>
           <li><strong>Móvil sin atajos</strong>: en dispositivos táctiles se ocultan la sección "Atajos de teclado" del menú y las indicaciones de teclas, y los atajos se desactivan. En el ordenador siguen igual.</li>
           <li><strong>Racha</strong>: un mes registrado con aportación total 0 (manual + saveback + round-up) corta la racha del producto, también si es el último mes; antes la racha seguía contando desde el mes anterior.</li>
         </ul>
@@ -542,24 +627,24 @@
 <div class="modal-bg" id="modalObjetivos">
   <div class="modal">
     <div class="modal-head">
-      <h2>OBJETIVOS</h2>
+      <h2>Objetivos</h2>
       <button class="modal-close" data-close="modalObjetivos">✕</button>
     </div>
     <div id="objList" class="obj-list"></div>
     <div class="obj-separator"></div>
     <div class="field">
-      <label>NOMBRE DEL OBJETIVO *</label>
+      <label>Nombre del objetivo *</label>
       <input type="text" id="objNombre" placeholder="Ej: Fondo de emergencia, Jubilación...">
     </div>
     <div class="field">
-      <label>META (€) *</label>
+      <label>Meta (€) *</label>
       <input type="number" step="100" min="1" id="objMeta" placeholder="50000">
     </div>
     <div class="field" style="margin-bottom:24px">
-      <label>PRODUCTO</label>
+      <label>Producto</label>
       <select id="objProducto"></select>
     </div>
-    <button class="save-btn" id="objSave" disabled>AÑADIR OBJETIVO</button>
+    <button class="save-btn" id="objSave" disabled>Añadir objetivo</button>
   </div>
 </div>
 
@@ -567,45 +652,45 @@
 <div class="modal-bg" id="modalProd">
   <div class="modal small">
     <div class="modal-head">
-      <h2 id="mpTitle">NUEVO PRODUCTO</h2>
+      <h2 id="mpTitle">Nuevo producto</h2>
       <button class="modal-close" data-close="modalProd">✕</button>
     </div>
     <div class="field">
-      <label>NOMBRE <span class="lbl-req" title="Campo obligatorio">*</span></label>
+      <label>Nombre <span class="lbl-req" title="Campo obligatorio">*</span></label>
       <input type="text" id="mpNombre" placeholder="Ej: Emergentes, S&P 500, Oro...">
     </div>
     <div class="field">
-      <label>REFERENCIA</label>
+      <label>Referencia</label>
       <input type="text" id="mpRef" placeholder="ISIN, ticker, plataforma, broker...">
     </div>
     <div class="field-row">
       <div class="field">
-        <label>TIPOLOGÍA</label>
+        <label>Tipología</label>
         <input type="text" id="mpTipologia" list="mpTipologiaList" placeholder="ETF, Criptomoneda...">
         <datalist id="mpTipologiaList"></datalist>
       </div>
       <div class="field">
-        <label>DIVISA</label>
+        <label>Divisa</label>
         <input type="text" id="mpDivisa" list="mpDivisaList" placeholder="EUR" maxlength="6">
         <datalist id="mpDivisaList"></datalist>
       </div>
     </div>
     <div class="field">
-      <label>COMENTARIOS</label>
+      <label>Comentarios</label>
       <textarea id="mpComentarios" rows="3" placeholder="Estrategia, riesgo, notas personales..."></textarea>
     </div>
     <div class="field-row field-row-2">
       <div class="field">
-        <label>UNIDADES</label>
+        <label>Unidades</label>
         <input type="number" step="any" min="0" id="mpUnidades" placeholder="0">
       </div>
       <div class="field">
-        <label>PRECIO ACTUAL (€)</label>
+        <label>Precio actual <span class="lbl-hint">(en la divisa del producto)</span></label>
         <input type="number" step="any" min="0" id="mpPrecioManual" placeholder="0,00">
       </div>
     </div>
     <div class="field" id="mpCoinGeckoField">
-      <label>COINGECKO ID <span class="lbl-hint">(criptomoneda)</span></label>
+      <label>CoinGecko ID <span class="lbl-hint">(criptomoneda)</span></label>
       <input type="text" id="mpCoingeckoId" list="mpCoingeckoList" placeholder="bitcoin, ethereum, cardano, solana...">
       <datalist id="mpCoingeckoList">
         <option value="bitcoin"></option>
@@ -625,13 +710,13 @@
       <div class="field-hint" id="mpCoinGeckoStatus"></div>
     </div>
     <div class="field" id="mpEtfField">
-      <label>ETF TICKER <span class="lbl-hint" id="mpEtfHint">(escribe un nombre o ticker para buscar)</span></label>
+      <label>Ticker del ETF <span class="lbl-hint" id="mpEtfHint">(escribe un nombre o ticker para buscar)</span></label>
       <input type="text" id="mpEtfTicker" placeholder="IWDA, MSCI World, S&P 500..." autocomplete="off">
       <div class="ticker-results" id="mpEtfResults" style="display:none"></div>
       <div class="field-hint" id="mpEtfStatus"></div>
     </div>
     <div class="field">
-      <label>% OBJETIVO EN CARTERA <span class="lbl-hint">(para asignación)</span></label>
+      <label>% objetivo en cartera <span class="lbl-hint">(para asignación)</span></label>
       <input type="number" step="0.1" min="0" max="100" id="mpAsignacion" placeholder="0">
     </div>
     <div class="field-row field-row-2">
@@ -640,15 +725,15 @@
         <input type="number" step="0.01" min="0" max="10" id="mpTer" placeholder="0,20">
       </div>
       <div class="field">
-        <label>COMISIÓN COMPRA <span class="lbl-hint">(€/operación)</span></label>
+        <label>Comisión compra <span class="lbl-hint">(€/operación)</span></label>
         <input type="number" step="0.01" min="0" id="mpComision" placeholder="0">
       </div>
     </div>
     <div class="field" style="margin-bottom:26px">
-      <label>COLOR</label>
+      <label>Color</label>
       <div class="colors" id="mpColors"></div>
     </div>
-    <button class="save-btn" id="mpSave" disabled>CREAR PRODUCTO</button>
+    <button class="save-btn" id="mpSave" disabled>Crear producto</button>
   </div>
 </div>
 
@@ -657,7 +742,7 @@
   <div class="modal modal-wide">
     <div class="modal-head">
       <div>
-        <h2>LOGROS <span class="logros-count-badge" id="logrosCount"></span></h2>
+        <h2>Logros <span class="logros-count-badge" id="logrosCount"></span></h2>
         <div class="modal-sub">Hitos que se desbloquean solos según tu progreso</div>
       </div>
       <button class="modal-close" data-close="modalLogros">✕</button>
@@ -670,12 +755,12 @@
 <div class="modal-bg" id="modalWrapped">
   <div class="modal">
     <div class="modal-head">
-      <h2>INFORME ANUAL</h2>
+      <h2>Informe anual</h2>
       <button class="modal-close" data-close="modalWrapped">✕</button>
     </div>
     <div class="wrapped-years" id="wrappedYears"></div>
     <div id="wrappedCard"></div>
-    <button class="save-btn" id="wrappedDownload" style="margin-top:16px">DESCARGAR COMO IMAGEN</button>
+    <button class="save-btn" id="wrappedDownload" style="margin-top:16px">Descargar como imagen</button>
   </div>
 </div>
 
@@ -683,7 +768,7 @@
 <div class="toast" id="snapToast" style="display:none">
   <div class="toast-icon">⚠</div>
   <div class="toast-body">
-    <div class="toast-title">HACE TIEMPO QUE NO GUARDAS BACKUP</div>
+    <div class="toast-title">Hace tiempo que no guardas backup</div>
     <div class="toast-sub">Abre el menú para crear un punto de restauración<span class="kbd-hint"> o pulsa <kbd>S</kbd></span></div>
   </div>
   <button class="toast-close" id="snapToastClose">✕</button>
@@ -700,6 +785,33 @@
   <button class="toast-close" id="backupToastClose">✕</button>
 </div>
 
-<script src="app.js"></script>
+<!-- Toast de nueva versión (js/main.js): el SW nuevo espera hasta que se pulse RECARGAR -->
+<!-- Ventana desfasada: otra ventana de la app ha guardado después (js/sincro.js) -->
+<div class="toast" id="syncToast" style="display:none" role="alert">
+  <div class="toast-icon">⇄</div>
+  <div class="toast-body">
+    <div class="toast-title">Cambios en otra ventana</div>
+    <div class="toast-sub">Recarga para ver los datos actuales</div>
+  </div>
+  <button class="toast-action" id="syncToastBtn">Recargar</button>
+</div>
+
+<div class="toast" id="updateToast" style="display:none">
+  <div class="toast-icon">↻</div>
+  <div class="toast-body">
+    <div class="toast-title">Nueva versión disponible</div>
+    <div class="toast-sub">Recarga para usarla (tus datos no se tocan)</div>
+  </div>
+  <button class="toast-action" id="updateToastBtn">Recargar</button>
+  <button class="toast-close" id="updateToastClose" aria-label="Cerrar">✕</button>
+</div>
+
+<!-- Aviso con DESHACER (js/dialog.js · avisoDeshacer) -->
+<div class="undo-toast" id="undoToast" role="status" aria-live="polite">
+  <span id="undoToastText"></span>
+  <button type="button" id="undoToastBtn">Deshacer</button>
+</div>
+
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,9 @@
+{
+  "name": "mi-cartera",
+  "private": true,
+  "type": "module",
+  "description": "Sin dependencias: este archivo solo hace que Node trate js/ como módulos ES para los tests",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

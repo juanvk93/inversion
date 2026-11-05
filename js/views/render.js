@@ -5,7 +5,7 @@ import { checkLogros } from "../logros.js";
 import { nuevaEntrada } from "../modals/entrada.js";
 import { refreshAllPricesAsync } from "../precios.js";
 import { bloqueado, saveState, state } from "../state.js";
-import { $, $$, RESERVED_IDS, esc, hoy } from "../utils.js";
+import { $, $$, RESERVED_IDS, esc, hoy, oscurecerHasta } from "../utils.js";
 import { renderAsignacion } from "./asignacion.js";
 import { renderBenchmark } from "./benchmark.js";
 import { ACCENT_CIERRE, renderCierre } from "./cierre.js";
@@ -21,7 +21,15 @@ import { renderResumen } from "./resumen.js";
 // 7. RENDER
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Color de acento de la vista activa. En el tema claro, oscurecido para que se
+// lea sobre blanco (texto, líneas y botones con texto blanco).
+export const acento = (color) => document.documentElement.classList.contains("light") ? oscurecerHasta(color) : color;
+
 export function getAccentColor() {
+  return acento(acentoBase());
+}
+
+function acentoBase() {
   if (state.tab === "proyeccion") return "#A78BFA";
   if (state.tab === "fire")       return "#34D399";
   if (state.tab === "asignacion") return "#22D3EE";
@@ -35,6 +43,7 @@ export function getAccentColor() {
 }
 
 export function setAccentVars(color) {
+  color = acento(color);
   document.documentElement.style.setProperty("--accent",      color);
   document.documentElement.style.setProperty("--accent-soft", color + "0F");
   document.documentElement.style.setProperty("--accent-line", color + "18");

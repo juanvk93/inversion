@@ -1032,6 +1032,10 @@ input[type=range] { width: 100%; accent-color: var(--purple); cursor: pointer; }
 :root.light body, :root.light html { background: var(--bg); color: var(--text); }
 :root.light .panel { box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
 :root.light .modal { box-shadow: 0 12px 40px rgba(0,0,0,0.18); }
+/* Botón principal de producto: el acento se oscurece en claro (render.js), texto blanco */
+:root.light .btn-accion { color: #fff; }
+/* Iniciales de producto: el color del producto no se lee sobre su tono claro */
+:root.light .avatar { color: var(--text) !important; }
 :root.light .drawer { box-shadow: -4px 0 24px rgba(0,0,0,0.06); }
 :root.light .drawer-overlay, :root.light .modal-bg { background: rgba(0,0,0,0.35); }
 /* Controles nativos (desplegable, icono del calendario) en claro con el tema claro */

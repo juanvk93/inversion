@@ -167,7 +167,7 @@ function renderBenchmarkSync(data, bench) {
     <div class="kpis">
       <div class="kpi">
         <div class="kpi-label">Tu cartera</div>
-        <div class="kpi-value" style="color:${accent}">${fmtE(valorCart)}</div>
+        <div class="kpi-value" style="color:var(--accent)">${fmtE(valorCart)}</div>
         <div class="kpi-sub">${rentCart>=0?"+":""}${fmt(rentCart)}% sobre aportado</div>
       </div>
       <div class="kpi">

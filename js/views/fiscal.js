@@ -102,7 +102,7 @@ export function renderFiscal() {
     <div class="kpis">
       <div class="kpi">
         <div class="kpi-label">Valor actual</div>
-        <div class="kpi-value" style="color:${accent}">${fmtE(totVal)}</div>
+        <div class="kpi-value" style="color:var(--accent)">${fmtE(totVal)}</div>
         <div class="kpi-sub">Coste de lo invertido: ${fmtE(totApor)}</div>
       </div>
       <div class="kpi">
@@ -159,7 +159,7 @@ export function renderFiscal() {
         <div class="fr-row"><span>Cuota a pagar${realizadaAno ? ` (${anoActual})` : ""}</span><strong style="color:var(--red)">-${fmtE(impuesto)}</strong></div>
         ${realizadaAno > 0 ? `<div class="fr-row"><span>De ella, por esta venta</span><strong style="color:var(--red)">-${fmtE(impVenta)}</strong></div>` : ""}
         ${ahorroFiscal > 0 ? `<div class="fr-row"><span>Ahorro por compensación</span><strong style="color:var(--green)">+${fmtE(ahorroFiscal)}</strong></div>` : ""}
-        <div class="fr-row fr-final"><span>Líquido tras impuestos</span><strong style="color:${accent}">${fmtE(totalVender - impVenta)}</strong></div>
+        <div class="fr-row fr-final"><span>Líquido tras impuestos</span><strong style="color:var(--accent)">${fmtE(totalVender - impVenta)}</strong></div>
         <div class="fr-marg">Tipo marginal aplicado: ${(tasaMarginal*100).toFixed(0)}%</div>
       </div>
     </div>

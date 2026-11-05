@@ -9,7 +9,7 @@ import {
   calcVolatilidad, divisasSinTipo, memoMonteCarlo, entradasEUR, filtrarFilas, invalidateStatsCache, tipoCambio, mesesHistorial, posicionPrevia, simulateMonteCarlo,
   statsTotalCalc, tasaMensualEq, tasaProyeccion,
 } from "../js/calc.js";
-import { parseNum } from "../js/utils.js";
+import { oscurecerHasta, parseNum } from "../js/utils.js";
 
 const cerca = (real, esperado, tol = 1e-6, msg) =>
   assert.ok(Math.abs(real - esperado) <= tol, msg ?? `${real} ≠ ${esperado} (±${tol})`);
@@ -372,5 +372,19 @@ describe("parseNum", () => {
     assert.ok(Number.isNaN(parseNum("abc")));
     assert.ok(Number.isNaN(parseNum("")));
     assert.ok(Number.isNaN(parseNum("12x")));
+  });
+});
+
+describe("oscurecerHasta (acento legible en el tema claro)", () => {
+  const contraste = (hex) => {
+    const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    return 1.05 / (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] + 0.05);
+  };
+  for (const color of ["#FBBF24", "#60A5FA", "#34D399", "#E879F9", "#22D3EE"]) {
+    test(`${color} llega a 4,5:1 sobre blanco`, () => assert.ok(contraste(oscurecerHasta(color)) >= 4.5));
+  }
+  test("un color ya oscuro no cambia; un valor no hex se devuelve igual", () => {
+    assert.equal(oscurecerHasta("#1E3A8A"), "#1E3A8A");
+    assert.equal(oscurecerHasta("var(--x)"), "var(--x)");
   });
 });

@@ -55,6 +55,21 @@ export function frase(t) {
   const r = s.split(/(\s+)/).map(w => SIGLAS.has(w.replace(/[^\wÁÉÍÓÚÑ-]/g, "")) ? w : w.toLowerCase()).join("");
   return r.replace(/[a-záéíóúñü]/, c => c.toUpperCase());
 }
+// Oscurece un color #RRGGBB hasta tener `minimo`:1 de contraste sobre blanco
+// (WCAG). Los colores de producto son claros: en el tema claro, como texto o
+// como fondo de un botón con texto blanco, no se leían (≈2:1).
+export function oscurecerHasta(hex, minimo = 4.5) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return hex;
+  let [r, g, b] = [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+  const lum = () => {
+    const c = [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  for (let i = 0; i < 40 && 1.05 / (lum() + 0.05) < minimo; i++) [r, g, b] = [r, g, b].map(v => Math.round(v * 0.94));
+  return "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
 // Iniciales de un nombre para su círculo de color ("ETF World" → "EW")
 export const iniciales  = (n)        => (String(n).trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("") || "?").toUpperCase();
 export const $          = (sel)      => document.querySelector(sel);

@@ -114,7 +114,7 @@ export function renderCierre() {
         <input type="checkbox" id="ciBackup" ${lsGet(LS_BACKUP_ENTRADA) !== "0" ? "checked" : ""}>
         <span>Descargar copia (.json) al guardar</span>
       </label>
-      <button class="save-btn" id="ciGuardar" style="background:${ACCENT_CIERRE}">Guardar cierre</button>
+      <button class="save-btn" id="ciGuardar" style="background:var(--accent)">Guardar cierre</button>
     </div>`;
 
   $$("[data-ci]").forEach(el => el.addEventListener("input", () => {

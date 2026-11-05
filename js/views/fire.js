@@ -113,7 +113,7 @@ export function renderFIRE() {
           <label>Gasto mensual deseado</label>
           <span class="val">${fmtE(gasto)}</span>
         </div>
-        <input type="range" min="500" max="10000" step="100" value="${gasto}" id="rangeFireGasto" style="accent-color:${fireColor}">
+        <input type="range" min="500" max="10000" step="100" value="${gasto}" id="rangeFireGasto" style="accent-color:var(--accent)">
         <div class="range-marks">
           <span>500€</span><span>10.000€</span>
         </div>
@@ -138,7 +138,7 @@ export function renderFIRE() {
           </label>
           <span class="val">${fmt(infl*100, 1)}%</span>
         </div>
-        <input type="range" min="0" max="6" step="0.1" value="${(infl*100).toFixed(1)}" id="rangeFireInfl" style="accent-color:${fireColor}">
+        <input type="range" min="0" max="6" step="0.1" value="${(infl*100).toFixed(1)}" id="rangeFireInfl" style="accent-color:var(--accent)">
         <div class="range-marks">
           ${[0, 2, 3, 5].map(v => `<button class="${Math.abs(infl*100 - v) < 0.05 ? "active" : ""}" data-infl-fire="${v}">${v}%</button>`).join("")}
         </div>
@@ -150,7 +150,7 @@ export function renderFIRE() {
         <div class="kpi-label">Capital objetivo
           <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Capital necesario para vivir indefinidamente de las rentas. Calculado como gasto_anual ÷ regla_retirada. Con la regla del 4%, equivale a 25× tu gasto anual.">i</span>
         </div>
-        <div class="kpi-value" style="color:${fireColor}">${fmtE(capitalObj)}</div>
+        <div class="kpi-value" style="color:var(--accent)">${fmtE(capitalObj)}</div>
         <div class="kpi-sub">${fmtE(gasto)} × 12 ÷ ${(regla*100).toFixed(1)}%</div>
       </div>
       <div class="kpi">
@@ -167,7 +167,7 @@ export function renderFIRE() {
         <div class="kpi-label">Año estimado FIRE
           <span class="kpi-info" tabindex="0" role="button" aria-label="Información" data-tip="Proyección determinista con ${esc(tasaTxt)}${infl > 0 ? ` ajustada por inflación → rentabilidad real ${(tasaReal*100).toFixed(1)}%` : ''} y aportación mensual media de los últimos 3 meses (${fmtE(aportMensual)}). El año real puede variar significativamente.">i</span>
         </div>
-        <div class="kpi-value" style="color:${anoFire ? fireColor : "var(--dimmer)"}">${anoFire ?? "—"}</div>
+        <div class="kpi-value" style="color:${anoFire ? "var(--accent)" : "var(--dimmer)"}">${anoFire ?? "—"}</div>
         <div class="kpi-sub">${anosRest != null ? `En ${anosRest.toFixed(1)} años` : inalcanzable ? "No alcanzable en 80 años con estos parámetros" : "Datos insuficientes"}</div>
       </div>
     </div>
@@ -175,12 +175,12 @@ export function renderFIRE() {
     <div class="panel">
       <div class="panel-title">Progreso hacia FIRE</div>
       <div class="fire-progress-track">
-        <div class="fire-progress-fill" style="width:${pctCompl.toFixed(2)}%;background:${fireColor}"></div>
+        <div class="fire-progress-fill" style="width:${pctCompl.toFixed(2)}%;background:var(--accent)"></div>
         <div class="fire-progress-label">${pctCompl.toFixed(1)}%</div>
       </div>
       <div class="fire-progress-foot">
         <span>${fmtE(0)}</span>
-        <span style="color:${fireColor}">${fmtE(valorAct)} actual</span>
+        <span style="color:var(--accent)">${fmtE(valorAct)} actual</span>
         <span>${fmtE(capitalObj)} objetivo</span>
       </div>
     </div>
@@ -205,7 +205,7 @@ export function renderFIRE() {
         <div><span class="fe-l">Capital objetivo equivale a</span> <span class="fe-v">${(capitalObj / gasto).toFixed(0)} meses de gasto</span></div>
         <div><span class="fe-l">Rentabilidad usada en la proyección</span> <span class="fe-v">${usaFallback ? `6% (por defecto${motivoFallback ? `; ${esc(motivoFallback)}` : ""})` : `${(tirHist*100).toFixed(1)}% (TIR histórica${tp.acotada ? ", acotada" : ""})`}</span></div>
         <div><span class="fe-l">Aportación mensual media</span> <span class="fe-v">${fmtE(aportMensual)}</span></div>
-        <div><span class="fe-l">Renta pasiva mensual al alcanzar FIRE</span> <span class="fe-v" style="color:${fireColor}">${fmtE(capitalObj * regla / 12)}</span></div>
+        <div><span class="fe-l">Renta pasiva mensual al alcanzar FIRE</span> <span class="fe-v" style="color:var(--accent)">${fmtE(capitalObj * regla / 12)}</span></div>
       </div>
     </div>
 

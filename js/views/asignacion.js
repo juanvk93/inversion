@@ -74,7 +74,7 @@ export function renderAsignacion() {
     <div class="kpis">
       <div class="kpi">
         <div class="kpi-label">Valor actual</div>
-        <div class="kpi-value" style="color:${accent}">${fmtE(totalActual)}</div>
+        <div class="kpi-value" style="color:var(--accent)">${fmtE(totalActual)}</div>
         <div class="kpi-sub">${items.length} producto(s)</div>
       </div>
       <div class="kpi">
@@ -155,14 +155,14 @@ export function renderAsignacion() {
           return `
             <div class="asig-row">
               <span data-l="Producto"><span class="asig-dot" style="background:${p.color}"></span>${esc(p.nombre)}</span>
-              <span data-l="Aportar" class="asig-aporte" style="color:${accent}">${fmtE(p.aportar)}</span>
+              <span data-l="Aportar" class="asig-aporte" style="color:var(--accent)">${fmtE(p.aportar)}</span>
               <span data-l="% Nuevo">${fmt(pctNuevo)}%</span>
               <span data-l="Drift nuevo" class="${driftCls}">${driftNuevo>=0?"+":""}${fmt(driftNuevo)}%</span>
             </div>`;
         }).join("")}
         <div class="asig-row asig-total">
           <span data-l="Total">Total</span>
-          <span data-l="Aportar" style="color:${accent}">${fmtE(sumSug)}</span>
+          <span data-l="Aportar" style="color:var(--accent)">${fmtE(sumSug)}</span>
           <span></span>
           <span></span>
         </div>

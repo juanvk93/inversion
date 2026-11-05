@@ -78,6 +78,9 @@ la app no funciona offline; si sobra uno inexistente, falla la instalación del 
 - Color del producto solo en la pestaña activa (texto subrayado), la línea del gráfico, el botón principal y su
   círculo de iniciales (`iniciales()`). Verde/rojo solo para ganancia/pérdida.
 - Botones y zonas táctiles ≥ 44 px; botones principales en pastilla (`.save-btn`, `.btn-accion`).
+- **Tema claro**: el acento se oscurece hasta 4,5:1 sobre blanco (`acento()` en `render.js`, `oscurecerHasta()` en
+  `utils.js`). En estilos en línea usar siempre `var(--accent)` o `getAccentColor()`, nunca el hex fijo del producto o de
+  la vista (en claro no se leería).
 
 ### Convenciones de los módulos
 

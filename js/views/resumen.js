@@ -58,7 +58,7 @@ export function renderResumen() {
     <div class="kpis">
       <div class="kpi">
         <div class="kpi-label">Valor total</div>
-        <div class="kpi-value" style="color:${accent}">${fmtE(totalValor)}</div>
+        <div class="kpi-value" style="color:var(--accent)">${fmtE(totalValor)}</div>
         <div class="kpi-sub">Aportado: ${fmtE(totalAportado)}</div>
       </div>
       <div class="kpi">

@@ -6,7 +6,7 @@
    - CDN externos (Chart.js, Google Fonts): stale-while-revalidate, cacheados bajo
      demanda solo si la respuesta es correcta (ok, no opaca) */
 
-const CACHE = "cartera-v92";
+const CACHE = "cartera-v93";
 const ASSETS = [
   "./",
   "./index.html",

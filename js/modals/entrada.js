@@ -5,7 +5,7 @@ import { tipoCambio } from "../calc.js";
 import { getProductPriceSync } from "../precios.js";
 import { bloqueado, flash, lsGet, lsSet, saveState, state } from "../state.js";
 import { $, $$, RESERVED_IDS, RE_FECHA, fmt, fmtDiv, hoy, labelMes, parseNum } from "../utils.js";
-import { getAccentColor, render } from "../views/render.js";
+import { render } from "../views/render.js";
 import { openProdModal } from "./producto.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -63,7 +63,6 @@ export function openEntryModal(entry = null) {
   const prod = state.productos.find(p => p.id === state.tab);
   if (!prod) return;   // tab huérfano: no crear entradas sin producto
   state.editEntradaId = entry?.id || null;
-  const accent = getAccentColor();
   const fecha  = entry?.fecha ?? hoy();
   // Entrada nueva: proponer las aportaciones del último mes registrado
   const previa = entry ? null : entradaPrevia(prod.id, fecha);
@@ -94,7 +93,7 @@ export function openEntryModal(entry = null) {
   }
 
   recalcMETotal();
-  $("#meSave").style.background = accent;
+  $("#meSave").style.background = "var(--accent)";
   $("#modalEntrada").classList.add("open");
 }
 

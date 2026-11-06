@@ -1,4 +1,4 @@
-import { calcStats, statsTotalCalc } from "../calc.js";
+import { calcStats, entradasEUR, statsTotalCalc } from "../calc.js";
 import { avisoDeshacer } from "../dialog.js";
 import { closeDrawer } from "../drawer.js";
 import { bloqueado, flash, saveState, state } from "../state.js";
@@ -32,7 +32,7 @@ function renderObjetivosList() {
   // Precalcular valor actual de cada contexto una sola vez (antes era O(n_obj × n_entradas))
   const valByPid = { total: statsTotalCalc(state).at(-1)?.valor || 0 };
   state.productos.forEach(p => {
-    valByPid[p.id] = calcStats(state.entradas[p.id] || []).at(-1)?.valor || 0;
+    valByPid[p.id] = calcStats(entradasEUR(state, p)).at(-1)?.valor || 0;   // las metas están en €
   });
 
   const groups = {};

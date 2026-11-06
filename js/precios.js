@@ -24,14 +24,14 @@ export function getProductPriceSync(prod) {
   if (prod.coingeckoId) {
     const c = priceCache[prod.coingeckoId];
     if (c && Number.isFinite(c.eur)) {
-      return { eur: c.eur, ts: c.ts, source: "coingecko", id: prod.coingeckoId };
+      return { eur: c.eur, ts: c.precioTs ?? c.ts, source: "coingecko", id: prod.coingeckoId };
     }
   }
   if (prod.etfTicker) {
     const { source, cache } = activeEtfProvider();
     const c = cache[prod.etfTicker];
     if (c && Number.isFinite(c.eur)) {
-      return { eur: c.eur, ts: c.ts, source, id: prod.etfTicker };
+      return { eur: c.eur, ts: c.precioTs ?? c.ts, source, id: prod.etfTicker };
     }
   }
   if (Number.isFinite(+prod.precioManual) && +prod.precioManual > 0) {
@@ -60,7 +60,7 @@ export async function fetchCoinGeckoPrice(id) {
       return priceCache[id];
     } catch (err) {
       console.warn("[Cartera] CoinGecko falló para", id, err);
-      priceCache[id] = { error: err?.message || "error", ts: Date.now() };   // negative-cache
+      guardarError(priceCache, id, err?.message || "error");   // negative-cache
       return null;
     } finally {
       delete priceFetching[id];
@@ -83,13 +83,12 @@ async function fetchCoinGeckoBatch(ids) {
       const data = await r.json();
       ids.forEach(id => {
         const eur = data?.[id]?.eur;
-        priceCache[id] = Number.isFinite(eur)
-          ? { eur, ts: Date.now() }
-          : { error: "Sin precio en respuesta", ts: Date.now() };   // negative-cache
+        if (Number.isFinite(eur)) priceCache[id] = { eur, ts: Date.now() };
+        else guardarError(priceCache, id, "Sin precio en respuesta");   // negative-cache
       });
     } catch (err) {
       console.warn("[Cartera] CoinGecko falló para", ids.join(","), err);
-      ids.forEach(id => { priceCache[id] = { error: err?.message || "error", ts: Date.now() }; });
+      ids.forEach(id => guardarError(priceCache, id, err?.message || "error"));
     } finally {
       ids.forEach(id => delete priceFetching[id]);
     }
@@ -104,17 +103,30 @@ async function fetchCoinGeckoBatch(ids) {
 // pasar (CORS), se repite una vez con ?apikey= y se recuerda para la sesión.
 let _tdSinCabecera = false;
 export async function pedirTwelveData(url, apiKey) {
-  if (!_tdSinCabecera) {
-    try {
-      return await fetchWithTimeout(url, { headers: { accept: "application/json", authorization: `apikey ${apiKey}` } });
-    } catch (err) {
-      if (/tiempo de espera/i.test(err?.message || "")) throw err;   // lento, no un bloqueo CORS
-      _tdSinCabecera = true;
-    }
-  }
   const u = new URL(url);
   u.searchParams.set("apikey", apiKey);
-  return fetchWithTimeout(u.toString(), { headers: { accept: "application/json" } });
+  const conKeyEnUrl = () => fetchWithTimeout(u.toString(), { headers: { accept: "application/json" } });
+  if (_tdSinCabecera) return conKeyEnUrl();
+  try {
+    return await fetchWithTimeout(url, { headers: { accept: "application/json", authorization: `apikey ${apiKey}` } });
+  } catch (err) {
+    if (/tiempo de espera/i.test(err?.message || "")) throw err;   // lento, no un bloqueo CORS
+    // Fallo de red o CORS (indistinguibles): solo si sin cabecera SÍ responde,
+    // el problema era la cabecera y se recuerda. Sin conexión no se cambia nada.
+    const r = await conKeyEnUrl();
+    _tdSinCabecera = true;
+    return r;
+  }
+}
+
+// Error al pedir un precio: se guarda (negative-cache con su ts, para no
+// reintentar en cada render) SIN perder el último precio bueno, que sigue
+// mostrándose con su antigüedad (precioTs) y sirve de referencia a precioSospechoso.
+function guardarError(cache, clave, msg) {
+  const prev = cache[clave];
+  cache[clave] = Number.isFinite(prev?.eur)
+    ? { eur: prev.eur, currency: prev.currency, precioTs: prev.precioTs ?? prev.ts, error: msg, ts: Date.now() }
+    : { error: msg, ts: Date.now() };
 }
 
 // ── Precios que llegan por proxies públicos ──
@@ -204,7 +216,7 @@ export async function fetchTwelveDataPrice(ticker) {
       return twelveDataCache[ticker];
     } catch (err) {
       console.warn("[Cartera] Twelve Data falló para", ticker, err);
-      twelveDataCache[ticker] = { error: err.message, ts: Date.now() };
+      guardarError(twelveDataCache, ticker, err.message);
       return null;
     } finally {
       delete twelveDataFetching[ticker];
@@ -243,7 +255,7 @@ export async function fetchYahooPrice(ticker) {
     } catch (err) {
       const msg = err instanceof ErrorYahoo ? err.message : `Yahoo: ${err.message}`;
       console.warn("[Cartera] Yahoo:", ticker, msg);
-      yahooCache[ticker] = { error: msg, ts: Date.now() };
+      guardarError(yahooCache, ticker, msg);
       return null;
     } finally {
       delete yahooFetching[ticker];

@@ -78,7 +78,8 @@ export function renderTabActual() {
       const fuente = price.source === "manual"
         ? "manual"
         : `${priceSourceLabel(price.source)} · ${priceAgeLabel(price.ts)}`;
-      parts.push(`<span title="Precio unitario actual">${fmtE(price.eur)}/u (${fuente})</span>`);
+      // El precio manual está en la divisa del producto; las cotizaciones, en euros
+      parts.push(`<span title="Precio unitario actual">${price.source === "manual" ? fmtM(price.eur) : fmtE(price.eur)}/u (${fuente})</span>`);
     }
     if (prod.referencia) parts.push(`<span class="sub-ref">${esc(prod.referencia)}</span>`);
     meta = parts.join(" · ") || esc(prod.nombre);
@@ -261,7 +262,9 @@ export function renderTabActual() {
     </section>`;
   }
 
-  html += renderObjetivos(esTotal ? null : state.tab, ultima.valor);
+  // Las metas están en euros: un producto en otra divisa se compara convertido
+  const valorEnEUR = enOtraDivisa ? (calcStats(entradasEUR(state, prod)).at(-1)?.valor ?? ultima.valor) : ultima.valor;
+  html += renderObjetivos(esTotal ? null : state.tab, valorEnEUR);
 
   // ── Gráficos de análisis ──
   // TIR comparativa y distribución usan datos completos; el resto, el periodo elegido.

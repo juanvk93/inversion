@@ -91,6 +91,16 @@ export async function dbDelete(store, key) {
   });
 }
 
+// Solo las claves (sin leer ni deserializar los registros)
+export async function dbKeys(store) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(store, "readonly").objectStore(store).getAllKeys();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
 export async function dbAll(store) {
   const db = await openDB();
   return new Promise((resolve, reject) => {

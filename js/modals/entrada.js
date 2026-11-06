@@ -73,12 +73,15 @@ export function openEntryModal(entry = null) {
   // Importes en la divisa del producto
   $$("#modalEntrada .me-div").forEach(el => { el.textContent = prod.divisa && prod.divisa !== "EUR" ? prod.divisa : "€"; });
   $("#meFecha").value           = fecha;
-  $("#meManual").value          = entry ? (entry.manual   ?? "") : numInput(previa?.manual);
-  $("#meSaveback").value        = entry ? (entry.saveback ?? "") : numInput(previa?.saveback);
-  $("#meRoundup").value         = entry ? (entry.roundup  ?? "") : numInput(previa?.roundup);
-  $("#meValor").value           = entry?.valor    ?? "";
+  // numInput (coma decimal) también al editar: String(12.345) = "12.345" se
+  // releía como miles (12345) y guardar sin tocar nada multiplicaba el importe
+  const base = entry || previa;
+  $("#meManual").value          = numInput(base?.manual);
+  $("#meSaveback").value        = numInput(base?.saveback);
+  $("#meRoundup").value         = numInput(base?.roundup);
+  $("#meValor").value           = entry ? (numInput(entry.valor) || (entry.valor === 0 ? "0" : "")) : "";
   $("#meValor").placeholder     = previa ? `Último: ${fmt(previa.valor)}` : "4450";
-  $("#meDividendo").value       = entry?.dividendo ?? "";
+  $("#meDividendo").value       = numInput(entry?.dividendo);
   $("#meNota").value            = entry?.nota     ?? "";
   $("#meBackup").checked        = lsGet(LS_BACKUP_ENTRADA) !== "0";   // activado por defecto
   $("#mePrefill").textContent   = previa && (previa.manual || previa.saveback || previa.roundup)
@@ -129,6 +132,9 @@ export function leerImporte(raw) {
 }
 
 export async function saveEntry() {
+  // Ventana desfasada (sincro.js) o datos bloqueados: avisar y dejar el modal
+  // abierto (antes se añadía en memoria, saveState no guardaba y se perdía)
+  if (bloqueado()) return;
   limpiarErrores();
   // Acepta también MM/AAAA o "ene-24" donde type=month se muestra como texto
   const fecha = normalizarFechaCSV($("#meFecha").value);

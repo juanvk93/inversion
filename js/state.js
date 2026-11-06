@@ -263,7 +263,7 @@ export function enqueueWrite(fn) {
 
 export function flash() {
   const el = $("#saved");
-  if (!el || _locked) return;   // bloqueado: no se guarda nada, no mostrar "guardado"
+  if (!el || _locked || desfasada()) return;   // no se guarda nada: no mostrar "guardado"
   el.style.display = "inline";
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.style.display = "none"; }, 2000);

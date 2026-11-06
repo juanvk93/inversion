@@ -54,35 +54,42 @@ async function descargar(divisa, desdeMes) {
 
 // En cada render (barato: sale enseguida si no hay divisas o está todo al día):
 // usa la caché y, si falta una divisa o un mes o ha caducado, descarga y repinta.
+// La caché del KV se lee una sola vez; `descargado[d]` es la fecha de la última
+// descarga de cada divisa (copiarla a memoria al arrancar no cuenta como descarga:
+// antes renovaba el plazo y el tipo del mes en curso no se actualizaba nunca).
+let _cache = null;
 export function cargarTiposCambio() {
   if (_cargando) return _cargando;
   _cargando = (async () => {
     const usadas = divisasEnUso();
     if (!Object.keys(usadas).length) return;
-    const cache = (await dbGet(DB_KV, "tiposCambio").catch(() => null)) || { tipos: {}, desde: {}, ts: 0 };
-    let cambio = false;
+    if (!_cache) {
+      const c = await dbGet(DB_KV, "tiposCambio").catch(() => null);
+      _cache = { tipos: c?.tipos || {}, desde: c?.desde || {}, descargado: c?.descargado || {} };
+    }
+    let cambio = false, descargado = false;
     // Lo que haya en caché sirve ya (también sin conexión)
     for (const d of Object.keys(usadas)) {
-      if (cache.tipos[d] && !state.tiposCambio[d]) { state.tiposCambio[d] = cache.tipos[d]; cambio = true; }
+      if (_cache.tipos[d] && !state.tiposCambio[d]) { state.tiposCambio[d] = _cache.tipos[d]; cambio = true; }
     }
-    const caducada = Date.now() - (cache.ts || 0) > TTL;
     for (const [d, desde] of Object.entries(usadas)) {
-      const cubre = cache.tipos[d] && cache.desde[d] <= desde && cache.tipos[d][hoy()] != null;
+      const caducada = Date.now() - (_cache.descargado[d] || 0) > TTL;
+      const cubre = _cache.tipos[d] && _cache.desde[d] <= desde && _cache.tipos[d][hoy()] != null;
       if (cubre && !caducada) continue;
       if (Date.now() - (_ultimoIntento[d] || 0) < REINTENTO) continue;
       _ultimoIntento[d] = Date.now();
       try {
-        cache.tipos[d] = await descargar(d, desde);
-        cache.desde[d] = desde;
-        state.tiposCambio[d] = cache.tipos[d];
-        cambio = true;
+        _cache.tipos[d] = await descargar(d, desde);
+        _cache.desde[d] = desde;
+        _cache.descargado[d] = Date.now();
+        state.tiposCambio[d] = _cache.tipos[d];
+        cambio = descargado = true;
       } catch (err) {
         console.warn(`[Cartera] Tipo de cambio ${d} no disponible`, err);
       }
     }
+    if (descargado) dbPut(DB_KV, _cache, "tiposCambio").catch(() => { /* no crítico */ });
     if (cambio) {
-      cache.ts = Date.now();
-      dbPut(DB_KV, cache, "tiposCambio").catch(() => { /* no crítico */ });
       invalidateStatsCache();
       render();
     }

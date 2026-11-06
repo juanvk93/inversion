@@ -1,7 +1,8 @@
-import { calcDCAAutomatico, calcMejorMes, calcRachaMaxPositiva, calcStats, calcStreakTotal, calcTIR, statsTotalCalc } from "./calc.js";
+import { calcDCAAutomatico, calcMejorMes, calcRachaMaxPositiva, calcStats, calcStreakTotal, calcTIR, entradasEUR, statsTotalCalc } from "./calc.js";
 import { _locked } from "./crypto.js";
 import { closeDrawer } from "./drawer.js";
 import { saveState, state } from "./state.js";
+import { desfasada } from "./sincro.js";
 import { $, esc, frase, hoyDia } from "./utils.js";
 
 // ── Logros (hitos automáticos) ─────────────────────────────────────────────
@@ -59,7 +60,7 @@ function logrosContext() {
   // Valor actual por contexto (total + cada producto), para contar objetivos cumplidos.
   const valByPid = { total: ultima.valor };
   state.productos.forEach(p => {
-    valByPid[p.id] = calcStats(state.entradas[p.id] || []).at(-1)?.valor || 0;
+    valByPid[p.id] = calcStats(entradasEUR(state, p)).at(-1)?.valor || 0;   // las metas están en €
   });
   const objetivosCompletados = (state.objetivos || []).filter(o => {
     const v = (o.productoId == null || o.productoId === "total") ? valByPid.total : (valByPid[o.productoId] || 0);
@@ -83,7 +84,7 @@ function logrosContext() {
 }
 
 export function checkLogros() {
-  if (_locked) return;
+  if (_locked || desfasada()) return;   // no podría guardarse
   const ctx = logrosContext();
   if (!ctx) return;
   if (!state.logros) state.logros = {};

@@ -1,11 +1,11 @@
 import { invalidateStatsCache } from "./calc.js";
 import { DB_KV, DB_SNAP, SNAP_MAX, SNAP_REMINDER_DAYS } from "./config.js";
 import { _cryptoKey, _locked, decryptValue, encryptValue } from "./crypto.js";
-import { ConflictoError, dbAll, dbDelete, dbGet, dbPut, dbWriteRev } from "./db.js";
+import { ConflictoError, dbAll, dbDelete, dbGet, dbKeys, dbPut, dbWriteRev } from "./db.js";
 import { avisar, confirmar } from "./dialog.js";
 import { closeDrawer } from "./drawer.js";
 import { compartirBackup, diasSinBackup } from "./io/backup.js";
-import { LOCKED_MSG, bloqueado, encodePairs, enqueueWrite, flash, saveState, state, stateFieldPairs } from "./state.js";
+import { bloqueado, encodePairs, enqueueWrite, flash, saveState, state, stateFieldPairs } from "./state.js";
 import { anunciarGuardado, marcarDesfasada, revActual } from "./sincro.js";
 import { $, $$, esc } from "./utils.js";
 import { render } from "./views/render.js";
@@ -22,7 +22,7 @@ const clone = (obj) => (typeof structuredClone === "function") ? structuredClone
 // para que el llamador no siga sin red de seguridad.
 export async function crearSnapshot(motivo = null) {
   if (typeof motivo !== "string") motivo = null;   // como handler recibe el evento
-  if (_locked) { avisar("Datos bloqueados. Recarga e introduce la passphrase."); return false; }
+  if (bloqueado()) return false;   // datos bloqueados o ventana desfasada
   if (motivo && !state.productos.length) return true;   // nada que proteger
   // Esperar a que se hayan persistido todas las escrituras pendientes antes de
   // clonar el estado, evitando capturar una versión obsoleta.
@@ -43,7 +43,7 @@ export async function crearSnapshot(motivo = null) {
       if (!motivo) await dbPut(DB_KV, iso, "lastSnapshot");
       // Limitar a SNAP_MAX: descartar los más antiguos. Dentro de la cola para no
       // cruzarse con un cambio de clave; basta con los ids, sin descifrar.
-      const ids = (await dbAll(DB_SNAP)).map(sn => sn.id).sort((a, b) => b - a);
+      const ids = (await dbKeys(DB_SNAP)).sort((a, b) => b - a);
       for (let i = SNAP_MAX; i < ids.length; i++) await dbDelete(DB_SNAP, ids[i]);
     });
     if (!motivo) {
@@ -130,7 +130,7 @@ export async function rekeyAll(oldKey, newKey, newSalt) {
 }
 
 async function restaurarSnapshot(id) {
-  if (_locked) { avisar(LOCKED_MSG); return; }
+  if (bloqueado()) return;
   const raw = await dbGet(DB_SNAP, id);
   if (!raw) return;
   const snap = await decodeSnapshot(raw);

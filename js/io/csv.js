@@ -4,6 +4,7 @@ import { closeDrawer } from "../drawer.js";
 import { crearSnapshot, hideBackupToast } from "../snapshots.js";
 import { bloqueado, flash, saveState, state } from "../state.js";
 import { hoyDia, parseNum, sanitizeId } from "../utils.js";
+import { descargarArchivo } from "./json.js";
 import { render } from "../views/render.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -87,21 +88,10 @@ function generarCSV() {
   return lineas.join("\n");
 }
 
-function descargarCSV(nombre, contenido) {
-  const blob = new Blob([contenido], { type: "text/csv;charset=utf-8" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href = url;
-  a.download = nombre;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-}
-
 export function exportarCSV() {
   if (bloqueado()) return;   // bloqueado: el estado en memoria está vacío
   const fecha = hoyDia();
-  descargarCSV(`mi-cartera-${fecha}.csv`, generarCSV());
+  descargarArchivo(`mi-cartera-${fecha}.csv`, generarCSV(), "text/csv;charset=utf-8");
   flash();
   closeDrawer();
 }
